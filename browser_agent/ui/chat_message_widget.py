@@ -2,15 +2,15 @@
 
 from datetime import datetime
 
-from PyQt6.QtCore import Qt, QUrl
-from PyQt6.QtGui import QDesktopServices
+from PyQt6.QtCore import QSize, Qt, QTimer, QUrl
+from PyQt6.QtGui import QDesktopServices, QTextDocument
 from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
     QSizePolicy,
-    QTextBrowser,
     QVBoxLayout,
+    QWidget,
 )
 
 from browser_agent.ui.markdown_renderer import md_to_html
@@ -24,44 +24,65 @@ from browser_agent.ui.styles import (
 )
 
 
-class _RichTextView(QTextBrowser):
-    """QTextBrowser that reflows HTML content when its width changes."""
+class _RichTextLabel(QWidget):
+    """A widget that renders HTML via QTextDocument and reflows on resize.
 
-    def __init__(self, parent=None):
+    Unlike QTextBrowser, this directly paints the document and uses
+    heightForWidth() so the layout system always gives it the right size.
+    No scrollbars, no fixed heights — purely driven by available width.
+    """
+
+    def __init__(self, font_size: float = FONT_BASE, color: str = DARK_TEXT, parent=None):
         super().__init__(parent)
-        self.setReadOnly(True)
-        self.setOpenLinks(False)
-        self.setOpenExternalLinks(False)
-        self.anchorClicked.connect(lambda url: QDesktopServices.openUrl(url))
-        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self.setStyleSheet(
-            f"QTextBrowser {{"
-            f"  background: transparent; border: none; padding: 0px; margin: 0px;"
-            f"  color: {DARK_TEXT}; font-size: {FONT_BASE}px; font-family: {FONT_FALLBACK};"
-            f"  selection-background-color: rgba(108,92,231,0.3);"
-            f"}}"
+        self._doc = QTextDocument(self)
+        self._doc.setDocumentMargin(0)
+        self._doc.setDefaultStyleSheet(
+            f"body {{ color: {color}; font-size: {font_size}px;"
+            f" font-family: {FONT_FALLBACK}; }}"
+            f" a {{ color: #60a5fa; text-decoration: none; }}"
         )
-        self.document().setDocumentMargin(0)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self.setMouseTracking(True)
 
-    def _reflow(self) -> None:
-        """Recompute document layout at current viewport width, then fix height."""
-        vw = self.viewport().width()
-        if vw > 20:
-            self.document().setTextWidth(vw)
-        doc_h = int(self.document().size().height()) + 4
-        self.setFixedHeight(max(doc_h, 20))
+    def setHtml(self, html: str) -> None:
+        self._doc.setHtml(html)
+        self.updateGeometry()
+        self.update()
+
+    def hasHeightForWidth(self) -> bool:
+        return True
+
+    def heightForWidth(self, width: int) -> int:
+        self._doc.setTextWidth(max(width, 50))
+        return int(self._doc.size().height()) + 2
+
+    def sizeHint(self) -> QSize:
+        w = self.width() if self.width() > 50 else 300
+        self._doc.setTextWidth(w)
+        return QSize(w, int(self._doc.size().height()) + 2)
+
+    def minimumSizeHint(self) -> QSize:
+        return QSize(50, 20)
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
-        self._reflow()
+        self._doc.setTextWidth(max(event.size().width(), 50))
+        self.updateGeometry()
+        self.update()
 
-    def setHtml(self, html: str) -> None:
-        super().setHtml(html)
-        # Defer reflow so viewport width is settled
-        from PyQt6.QtCore import QTimer
-        QTimer.singleShot(0, self._reflow)
+    def paintEvent(self, event) -> None:
+        from PyQt6.QtGui import QAbstractTextDocumentLayout, QPainter
+
+        painter = QPainter(self)
+        ctx = QAbstractTextDocumentLayout.PaintContext()
+        self._doc.documentLayout().draw(painter, ctx)
+        painter.end()
+
+    def mousePressEvent(self, event) -> None:
+        anchor = self._doc.documentLayout().anchorAt(event.pos())
+        if anchor:
+            QDesktopServices.openUrl(QUrl(anchor))
+        super().mousePressEvent(event)
 
 
 class ChatMessageWidget(QFrame):
@@ -107,13 +128,13 @@ class ChatMessageWidget(QFrame):
 
         # Message content
         self._raw_text_store = text
-        self._text_view: _RichTextView | None = None
+        self._rich_label: _RichTextLabel | None = None
         self._text_label: QLabel | None = None
 
         if role in ("assistant", "error"):
-            self._text_view = _RichTextView()
-            self._text_view.setHtml(md_to_html(text))
-            layout.addWidget(self._text_view)
+            self._rich_label = _RichTextLabel(FONT_BASE, DARK_TEXT)
+            self._rich_label.setHtml(md_to_html(text))
+            layout.addWidget(self._rich_label)
         else:
             self._text_label = QLabel(text)
             self._text_label.setObjectName("msg_text")
@@ -127,30 +148,23 @@ class ChatMessageWidget(QFrame):
 
         # Detail (tool results)
         if detail:
-            detail_view = _RichTextView()
-            detail_view.setStyleSheet(
-                f"QTextBrowser {{"
-                f"  background: transparent; border: none; padding: 0px;"
-                f"  color: {DARK_TEXT_SECONDARY}; font-size: {FONT_SM}px;"
-                f"  font-family: {FONT_FALLBACK};"
-                f"}}"
-            )
-            detail_view.setHtml(md_to_html(detail))
-            layout.addWidget(detail_view)
+            detail_label = _RichTextLabel(FONT_SM, DARK_TEXT_SECONDARY)
+            detail_label.setHtml(md_to_html(detail))
+            layout.addWidget(detail_label)
 
         # Entrance animation
         self._anim = slide_fade_in(self, duration=300)
 
     def append_text(self, text: str) -> None:
         self._raw_text_store += text
-        if self._text_view:
-            self._text_view.setHtml(md_to_html(self._raw_text_store))
+        if self._rich_label:
+            self._rich_label.setHtml(md_to_html(self._raw_text_store))
         elif self._text_label:
             self._text_label.setText(self._text_label.text() + text)
 
     def set_text(self, text: str) -> None:
         self._raw_text_store = text
-        if self._text_view:
-            self._text_view.setHtml(md_to_html(text))
+        if self._rich_label:
+            self._rich_label.setHtml(md_to_html(text))
         elif self._text_label:
             self._text_label.setText(text)
