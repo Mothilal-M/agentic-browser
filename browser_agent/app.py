@@ -94,6 +94,7 @@ def main() -> int:
     controller = AgentController(
         compiled_graph, config, screenshot, page_controller, engine,
         conversation_db=conv_db, memory_db=memory_db, user_profile=profile,
+        pattern_tracker=pattern_tracker,
         guardrails=guardrails, session_recorder=recorder,
     )
 

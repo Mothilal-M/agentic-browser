@@ -108,6 +108,7 @@ class ChatPanel(QWidget):
     new_thread_requested = pyqtSignal()
     history_toggled = pyqtSignal()
     skills_toggled = pyqtSignal()
+    rules_toggled = pyqtSignal()
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -161,6 +162,10 @@ class ChatPanel(QWidget):
         self._skills_btn.clicked.connect(self.skills_toggled.emit)
         header_layout.addWidget(self._skills_btn)
 
+        self._rules_btn = _HeaderButton("\u23f0", "Rules") # Alarm clock
+        self._rules_btn.clicked.connect(self.rules_toggled.emit)
+        header_layout.addWidget(self._rules_btn)
+
         # ── Stacked: chat view / history overlay / skills overlay ──
         self._stack = QStackedWidget()
 
@@ -202,6 +207,14 @@ class ChatPanel(QWidget):
         self._skills_layout.setSpacing(0)
         self._stack.addWidget(self._skills_page)  # index 2
 
+        # Page 3: Rules overlay (populated externally)
+        self._rules_page = QWidget()
+        self._rules_page.setObjectName("chat_panel")
+        self._rules_layout = QVBoxLayout(self._rules_page)
+        self._rules_layout.setContentsMargins(0, 0, 0, 0)
+        self._rules_layout.setSpacing(0)
+        self._stack.addWidget(self._rules_page)  # index 3
+
         # ── Composer ──
         composer = QWidget()
         composer.setObjectName("composer_area")
@@ -237,45 +250,55 @@ class ChatPanel(QWidget):
         """Set the skills panel widget (SkillsPanel)."""
         self._skills_layout.addWidget(widget)
 
+    def set_rules_widget(self, widget: QWidget) -> None:
+        """Set the rules panel widget (RulesPanel)."""
+        self._rules_layout.addWidget(widget)
+
+    def _reset_overlay_buttons(self) -> None:
+        default = (
+            f"QLabel {{ color: {DARK_TEXT_MUTED}; font-size: 16px;"
+            f" background: transparent; border-radius: 8px; }}"
+            f"QLabel:hover {{ color: {DARK_TEXT}; background: rgba(255,255,255,0.06); }}"
+        )
+        self._history_btn.setStyleSheet(default)
+        self._skills_btn.setStyleSheet(default)
+        self._rules_btn.setStyleSheet(default)
+
     def show_chat(self) -> None:
         self._stack.setCurrentIndex(0)
-        self._history_btn.setStyleSheet(
-            f"QLabel {{ color: {DARK_TEXT_MUTED}; font-size: 16px;"
-            f" background: transparent; border-radius: 8px; }}"
-            f"QLabel:hover {{ color: {DARK_TEXT}; background: rgba(255,255,255,0.06); }}"
-        )
-        self._skills_btn.setStyleSheet(
-            f"QLabel {{ color: {DARK_TEXT_MUTED}; font-size: 16px;"
-            f" background: transparent; border-radius: 8px; }}"
-            f"QLabel:hover {{ color: {DARK_TEXT}; background: rgba(255,255,255,0.06); }}"
-        )
+        self._reset_overlay_buttons()
 
     def toggle_history(self) -> None:
         if self._stack.currentIndex() == 1:
             self.show_chat()
         else:
+            self._reset_overlay_buttons()
             self._stack.setCurrentIndex(1)
             self._history_btn.setStyleSheet(
                 f"QLabel {{ color: {ACCENT_PRIMARY}; font-size: 16px;"
                 f" background: rgba(108,92,231,0.12); border-radius: 8px; }}"
-            )
-            self._skills_btn.setStyleSheet(
-                f"QLabel {{ color: {DARK_TEXT_MUTED}; font-size: 16px;"
-                f" background: transparent; border-radius: 8px; }}"
             )
 
     def toggle_skills(self) -> None:
         if self._stack.currentIndex() == 2:
             self.show_chat()
         else:
+            self._reset_overlay_buttons()
             self._stack.setCurrentIndex(2)
             self._skills_btn.setStyleSheet(
                 f"QLabel {{ color: {ACCENT_SECONDARY}; font-size: 16px;"
                 f" background: rgba(168,85,247,0.12); border-radius: 8px; }}"
             )
-            self._history_btn.setStyleSheet(
-                f"QLabel {{ color: {DARK_TEXT_MUTED}; font-size: 16px;"
-                f" background: transparent; border-radius: 8px; }}"
+
+    def toggle_rules(self) -> None:
+        if self._stack.currentIndex() == 3:
+            self.show_chat()
+        else:
+            self._reset_overlay_buttons()
+            self._stack.setCurrentIndex(3)
+            self._rules_btn.setStyleSheet(
+                f"QLabel {{ color: {WARNING}; font-size: 16px;"
+                f" background: rgba(245,158,11,0.12); border-radius: 8px; }}"
             )
 
     # ── Event filter (Enter to send) ──
