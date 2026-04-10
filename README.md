@@ -29,10 +29,20 @@ A PyQt6 desktop application that embeds a full Chromium browser with an AI-power
 - **AI Vision** — Gemini Flash sees the page via screenshots and understands page context
 - **Visual Automation** — animated cursor movement, click ripples, element highlighting, character-by-character typing
 - **ReAct Agent Loop** — Reasoning + Acting pattern with tool calling for multi-step browser tasks
-- **11 Browser Tools** — navigate, click, type, scroll, extract text, take screenshots, press keys, wait for elements, and more
-- **Skill System** — extensible skills (code review, debugging, security review, test generation, refactoring)
+- **29+ Browser Tools** — navigate, click, type, scroll, extract text, screenshots, shadow DOM, iframes, CAPTCHA detection, autofill, and more
+- **Smart Error Recovery** — 5-tier fallback chain: CSS selector, wait+retry, text match, aria-label, scroll+retry
+- **Skill System** — record, save, and replay browser workflows with one click
+- **Session Recording** — record AI sessions and export as HTML reports or JSON
+- **Long-Term Memory** — remembers user preferences, credentials, and patterns across sessions
+- **User Profile** — auto-fills forms with saved personal info (name, email, phone, etc.)
+- **Voice Control** — speech-to-text input and text-to-speech output via Web Speech API
+- **Automation Rules** — schedule recurring tasks (e.g., "check email every 30 minutes")
+- **Multi-Agent Coordination** — breaks complex goals into sub-tasks dispatched to specialist agents (Researcher, FormFiller, Navigator, Monitor)
+- **Predictive Suggestions** — learns browsing patterns and suggests actions based on time-of-day and day-of-week
+- **Action Guardrails** — detects sensitive actions (payments, deletions) and requests confirmation before executing
 - **User Agent Spoofing** — HTTP header, JS property, and Client Hints API level spoofing
 - **Local Model Support** — works with Ollama/LM Studio via OpenAI-compatible API
+- **Incognito Mode** — off-the-record browsing with no persistent storage
 
 ## Tech Stack
 
@@ -44,6 +54,7 @@ A PyQt6 desktop application that embeds a full Chromium browser with an AI-power
 | AI Framework | 10xscale-agentflow | ReAct agent graph orchestration |
 | LLM | Google Gemini 3 Flash | Multimodal vision + tool calling |
 | Browser Control | JavaScript injection | DOM manipulation on live pages |
+| Storage | SQLite | Conversations, memory, skills, rules, patterns |
 
 ## Project Structure
 
@@ -54,10 +65,15 @@ browser_agent/
 ├── ui/                       # View layer (PyQt6 widgets)
 │   ├── main_window.py        # QMainWindow with QSplitter
 │   ├── browser_panel.py      # URL bar, nav buttons, tabs, QWebEngineView
-│   ├── chat_panel.py         # Message list, composer, typing indicator
+│   ├── chat_panel.py         # Message list, composer, overlay panels
 │   ├── chat_message_widget.py # Message bubbles with animations
+│   ├── skills_panel.py       # Saved workflows with one-click replay
+│   ├── rules_panel.py        # Automation rules management
+│   ├── thread_selector.py    # Chat history sidebar
 │   ├── tab_bar.py            # Tab management
-│   └── styles.py             # QSS theme + animation helpers
+│   ├── tool_call_widget.py   # Collapsible tool call display
+│   ├── markdown_renderer.py  # Markdown to HTML conversion
+│   └── styles.py             # QSS dark theme + design tokens
 ├── browser/                  # Browser engine layer
 │   ├── engine.py             # QWebEngineProfile, cookie persistence, UA spoofing
 │   ├── page_controller.py    # Async Python ↔ JavaScript bridge
@@ -66,18 +82,36 @@ browser_agent/
 ├── agent/                    # AI agent layer
 │   ├── state.py              # BrowserAgentState (extends AgentState)
 │   ├── graph.py              # StateGraph construction + ReAct compilation
-│   ├── tools.py              # 11 browser tool functions (closure factory)
-│   └── prompts.py            # System prompt with state interpolation
+│   ├── tools.py              # 29+ browser tool functions (closure factory)
+│   ├── prompts.py            # System prompt with state interpolation
+│   ├── vision.py             # Vision-first element detection
+│   ├── error_recovery.py     # Smart fallback strategies
+│   └── guardrails.py         # Action confirmation for sensitive operations
 ├── bridge/                   # Coordination layer
 │   ├── agent_controller.py   # Orchestrates: chat → agent → browser → UI
+│   ├── async_bridge.py       # qasync event loop setup
 │   └── signals.py            # Qt signals for thread-safe updates
 ├── skills/                   # Skill recording & playback
+│   ├── recorder.py           # Records tool calls during agent runs
+│   ├── player.py             # Replays saved workflows step-by-step
+│   ├── store.py              # SQLite CRUD for skills
+│   └── models.py             # Skill and SkillStep dataclasses
 ├── recording/                # Session recording & export
-├── storage/                  # Conversation & memory persistence
-├── voice/                    # Voice engine
-├── autonomous/               # Rules engine for autonomous actions
+│   ├── recorder.py           # Captures events + screenshots
+│   ├── exporter.py           # Export to HTML report or JSON
+│   └── models.py             # RecordedEvent dataclasses
+├── storage/                  # Persistence layer
+│   ├── conversation_db.py    # Thread and message storage
+│   ├── memory_db.py          # Long-term facts with FTS5 search
+│   └── user_profile.py       # Key-value profile for form auto-fill
+├── autonomous/               # Automation
+│   └── rules_engine.py       # Scheduled rule execution
 ├── multiagent/               # Multi-agent coordination
-└── predictive/               # User pattern tracking
+│   └── coordinator.py        # Task decomposition + specialist dispatch
+├── predictive/               # Pattern learning
+│   └── pattern_tracker.py    # Browsing pattern analysis + suggestions
+└── voice/                    # Voice I/O
+    └── engine.py             # Web Speech API STT + system TTS
 ```
 
 ## Getting Started
@@ -99,11 +133,19 @@ pip install -r requirements.txt
 
 ### Configuration
 
-Create a `.env` file in the project root:
+Copy the example env file and add your API key:
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` and set your Gemini API key:
 
 ```env
 GEMINI_API_KEY=your_api_key_here
 ```
+
+See [.env.example](.env.example) for all available configuration options.
 
 ### Run
 
@@ -124,6 +166,8 @@ BROWSER_AGENT_REASONING_EFFORT=low
 
 ## Browser Tools
 
+### Core Tools
+
 | Tool | Parameters | Description |
 |------|-----------|-------------|
 | `navigate_to` | `url` | Navigate browser to URL |
@@ -132,11 +176,47 @@ BROWSER_AGENT_REASONING_EFFORT=low
 | `scroll_page` | `direction`, `pixels` | Smooth scroll with visual label |
 | `press_key` | `key` | Keyboard press (Enter, Tab, Escape...) |
 | `extract_text` | `selector` | Read text content from element |
-| `take_screenshot` | — | Capture page for AI vision analysis |
-| `get_page_elements` | — | List all interactive elements |
-| `go_back` | — | Browser history back |
-| `go_forward` | — | Browser history forward |
+| `take_screenshot` | -- | Capture page for AI vision analysis |
+| `get_page_elements` | -- | List all interactive elements |
+| `go_back` / `go_forward` | -- | Browser history navigation |
 | `wait_for_element` | `selector`, `timeout` | Wait for dynamic content |
+
+### Smart Tools (Auto-Recovery)
+
+| Tool | Description |
+|------|-------------|
+| `smart_click` | Click with 5-tier fallback: selector, wait+retry, text match, aria-label, scroll+retry |
+| `smart_type` | Type with the same fallback chain |
+| `click_by_description` | Click by visual description ("the blue Apply button") |
+| `find_element_by_text` | Find element by visible text content |
+| `understand_page` | Get structured page summary |
+
+### Advanced Tools
+
+| Tool | Description |
+|------|-------------|
+| `upload_file` | Upload a local file to a file input |
+| `check_for_captcha` | Detect CAPTCHAs or 2FA prompts |
+| `click_shadow_element` | Interact with Shadow DOM elements |
+| `list_iframes` | List all iframes on the page |
+| `autofill_form` | Fill multiple form fields at once |
+| `execute_multi_agent_plan` | Break complex goals into specialist sub-tasks |
+
+### Memory & Skills
+
+| Tool | Description |
+|------|-------------|
+| `remember` / `recall` | Save and search long-term user facts |
+| `get_my_profile` / `save_profile_field` | Access and update user profile |
+| `list_skills` / `run_skill` | List and replay saved workflows |
+| `save_current_as_skill` / `delete_skill` | Manage workflow skills |
+
+## Testing
+
+```bash
+pip install pytest
+python -m pytest tests/ -v
+```
 
 ## License
 
