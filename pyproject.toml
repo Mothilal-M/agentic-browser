@@ -47,3 +47,55 @@ include = ["browser_agent*"]
 
 [tool.setuptools.package-data]
 "browser_agent.ui.fonts" = ["*.ttf"]
+
+# ── Testing ──────────────────────────────────────
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --tb=short"
+pythonpath = ["."]
+
+# ── Coverage ─────────────────────────────────────
+[tool.coverage.run]
+source = ["browser_agent"]
+omit = ["tests/*", "browser_agent/ui/fonts/*"]
+
+[tool.coverage.report]
+show_missing = true
+skip_empty = true
+fail_under = 50
+
+# ── Linting & Formatting ────────────────────────
+[tool.ruff]
+target-version = "py310"
+line-length = 120
+
+[tool.ruff.lint]
+select = [
+    "E",     # pycodestyle errors
+    "W",     # pycodestyle warnings
+    "F",     # pyflakes
+    "I",     # isort
+    "N",     # pep8-naming
+    "UP",    # pyupgrade
+    "B",     # flake8-bugbear
+    "S",     # flake8-bandit (security)
+    "T20",   # flake8-print
+    "SIM",   # flake8-simplify
+    "TCH",   # flake8-type-checking
+    "RUF",   # ruff-specific rules
+]
+ignore = [
+    "S101",  # assert in tests is fine
+    "T201",  # print statements (CLI app)
+    "E501",  # line length (handled by formatter)
+    "B008",  # function call in default arg (pydantic pattern)
+    "S603",  # subprocess without shell=True check
+    "S607",  # partial executable path
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101", "S106"]
+"browser_agent/browser/js_scripts.py" = ["E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["browser_agent"]
