@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from browser_agent.browser.page_controller import PageController
     from browser_agent.browser.screenshot import ScreenshotCapture
     from browser_agent.config import AppConfig
+    from browser_agent.predictive.pattern_tracker import PatternTracker
     from browser_agent.storage.conversation_db import ConversationDB
     from browser_agent.storage.memory_db import MemoryDB
     from browser_agent.storage.user_profile import UserProfile
@@ -41,6 +42,7 @@ class AgentController(QObject):
         conversation_db: ConversationDB | None = None,
         memory_db: MemoryDB | None = None,
         user_profile: UserProfile | None = None,
+        pattern_tracker: PatternTracker | None = None,
         guardrails=None,
         session_recorder=None,
     ) -> None:
@@ -56,6 +58,7 @@ class AgentController(QObject):
         self._engine = browser_engine
         self._conv_db = conversation_db
         self._memory_db = memory_db
+        self._pattern_tracker = pattern_tracker
         self._thread_id = str(uuid.uuid4())
         self._current_task: asyncio.Task | None = None
 
@@ -102,6 +105,10 @@ class AgentController(QObject):
             if self._user_profile:
                 profile_text = self._user_profile.format_for_prompt()
 
+            suggestions_text = ""
+            if self._pattern_tracker:
+                suggestions_text = self._pattern_tracker.format_suggestions_for_prompt()
+
             # Build messages
             messages = [Message.text_message(text, role="user")]
             if screenshot_b64:
@@ -121,6 +128,7 @@ class AgentController(QObject):
                 "interactive_elements": elements,
                 "agent_memory": memory_text,
                 "user_profile": profile_text,
+                "browsing_suggestions": suggestions_text,
             }
 
             config = {

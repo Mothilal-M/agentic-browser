@@ -12,6 +12,8 @@ Page title: {page_title}
 
 {user_profile}
 
+{browsing_suggestions}
+
 Interactive elements visible on the page:
 {interactive_elements}
 
