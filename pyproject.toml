@@ -1,0 +1,49 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agentic-browser"
+version = "0.1.0"
+description = "AI-powered desktop browser with a chat sidebar — Gemini Flash sees and controls web pages in real time"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+authors = [
+    {name = "Mothilal M"},
+]
+keywords = ["ai", "browser", "agent", "automation", "gemini", "pyqt6"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Internet :: WWW/HTTP :: Browsers",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "10xscale-agentflow[google-genai]>=0.7.2",
+    "PyQt6>=6.6",
+    "PyQt6-WebEngine>=6.6",
+    "qasync>=0.27",
+    "pydantic-settings>=2.0",
+    "python-dotenv>=1.0",
+    "pyyaml>=6.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/Mothilal-M/agentic-browser"
+Repository = "https://github.com/Mothilal-M/agentic-browser"
+Issues = "https://github.com/Mothilal-M/agentic-browser/issues"
+
+[project.scripts]
+agentic-browser = "browser_agent.app:main"
+
+[tool.setuptools.packages.find]
+include = ["browser_agent*"]
+
+[tool.setuptools.package-data]
+"browser_agent.ui.fonts" = ["*.ttf"]

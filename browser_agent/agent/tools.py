@@ -11,6 +11,7 @@ if TYPE_CHECKING:
     from browser_agent.browser.engine import BrowserEngine
     from browser_agent.browser.page_controller import PageController
     from browser_agent.browser.screenshot import ScreenshotCapture
+    from browser_agent.multiagent.coordinator import MultiAgentCoordinator
     from browser_agent.skills.player import SkillPlayer
     from browser_agent.skills.store import SkillStore
     from browser_agent.storage.memory_db import MemoryDB
@@ -27,6 +28,7 @@ def create_browser_tools(
     user_profile: "UserProfile | None" = None,
     vision_detector=None,
     error_recovery=None,
+    multi_agent: "MultiAgentCoordinator | None" = None,
 ) -> list[Callable]:
     """Create tool functions with browser components bound via closure."""
 
