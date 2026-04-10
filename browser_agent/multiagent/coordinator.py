@@ -73,9 +73,12 @@ class MultiAgentCoordinator:
     each sub-task by prepending the specialist prompt to the user message.
     """
 
-    def __init__(self, agent_controller: AgentController) -> None:
+    def __init__(self, agent_controller: AgentController | None = None) -> None:
         self._controller = agent_controller
         self._current_plan: TaskPlan | None = None
+
+    def set_controller(self, agent_controller: AgentController) -> None:
+        self._controller = agent_controller
 
     @property
     def has_active_plan(self) -> bool:

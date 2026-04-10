@@ -410,4 +410,21 @@ def create_browser_tools(
     if skill_store and skill_player:
         tools.extend([list_skills, run_skill, save_current_as_skill, delete_skill])
 
+    if multi_agent:
+        async def execute_multi_agent_plan(goal: str, subtasks_json: str) -> str:
+            """Execute a complex goal using specialist agents. Break the goal into sub-tasks
+            and assign each to a specialist role. subtasks_json should be a JSON array like:
+            [{"description": "Search for jobs", "role": "researcher"},
+             {"description": "Fill the form", "role": "form_filler"}]
+            Roles: researcher, form_filler, monitor, navigator."""
+            import json
+            try:
+                subtasks = json.loads(subtasks_json)
+            except json.JSONDecodeError:
+                return "Error: subtasks_json must be valid JSON array"
+            result = await multi_agent.execute_plan(goal, subtasks)
+            return result
+
+        tools.append(execute_multi_agent_plan)
+
     return tools

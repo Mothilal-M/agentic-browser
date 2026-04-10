@@ -84,11 +84,14 @@ def main() -> int:
     pattern_tracker = PatternTracker(storage_dir / "patterns.db")
     rules_engine = RulesEngine(storage_dir / "rules.db")
 
+    # Multi-agent coordinator (created early, controller set after)
+    multi_agent = MultiAgentCoordinator()
+
     # Agent layer (with memory + skills + intelligence)
     compiled_graph = build_agent_graph(
         config, page_controller, screenshot, engine,
         memory_db, skill_store, skill_player, profile,
-        vision, recovery,
+        vision, recovery, multi_agent,
     )
 
     # Bridge layer (with persistence)
@@ -336,7 +339,7 @@ def main() -> int:
     window.browser_panel.page_loaded.connect(on_page_visit)
 
     # --- Wire multi-agent coordinator ---
-    multi_agent = MultiAgentCoordinator(controller)
+    multi_agent.set_controller(controller)
 
     # --- Wire autonomous rules engine ---
     rules_engine.start(controller)

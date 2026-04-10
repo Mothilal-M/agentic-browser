@@ -20,6 +20,7 @@ from browser_agent.config import AppConfig
 if TYPE_CHECKING:
     from browser_agent.agent.error_recovery import ErrorRecovery
     from browser_agent.agent.vision import VisionDetector
+    from browser_agent.multiagent.coordinator import MultiAgentCoordinator
     from browser_agent.skills.player import SkillPlayer
     from browser_agent.skills.store import SkillStore
     from browser_agent.storage.memory_db import MemoryDB
@@ -53,11 +54,12 @@ def build_agent_graph(
     user_profile: UserProfile | None = None,
     vision_detector: VisionDetector | None = None,
     error_recovery: ErrorRecovery | None = None,
+    multi_agent: MultiAgentCoordinator | None = None,
 ):
     tools = create_browser_tools(
         page_controller, screenshot_capture, browser_engine,
         memory_db, skill_store, skill_player, user_profile,
-        vision_detector, error_recovery,
+        vision_detector, error_recovery, multi_agent,
     )
     tool_node = ToolNode(tools)
 
