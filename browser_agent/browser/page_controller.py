@@ -219,3 +219,51 @@ class PageController:
             ok = sum(1 for f in filled if f.get("success"))
             return f"Auto-filled {ok}/{len(filled)} fields."
         return f"Autofill failed: {result.get('error', 'unknown')}"
+
+    # ── Accessibility Tree Snapshots ──
+
+    async def take_snapshot(self) -> tuple[str, dict]:
+        """Capture an accessibility tree snapshot with @ref system.
+
+        Returns (snapshot_text, refs_dict) where refs_dict maps 'e0','e1'...
+        to {selector, tag, role, text, x, y}.
+        """
+        raw = await self.run_js(js_scripts.ACCESSIBILITY_SNAPSHOT)
+        if isinstance(raw, str):
+            try:
+                data = json.loads(raw)
+                return data.get("snapshot", ""), data.get("refs", {})
+            except json.JSONDecodeError:
+                pass
+        return "", {}
+
+    async def click_ref(self, ref: str, refs: dict) -> str:
+        """Click an element by its @ref (e.g. 'e3'). Looks up the selector from refs dict."""
+        await self._ensure_visuals()
+        info = refs.get(ref)
+        if not info:
+            return f"Ref @{ref} not found in current snapshot."
+        selector = info.get("selector", "")
+        if not selector:
+            return f"No selector for @{ref}"
+        script = js_scripts.CLICK_REF % _js_string(selector)
+        result = await self._run_js_json(script)
+        if result.get("success"):
+            return f"Clicked @{ref} [{info.get('role', info.get('tag'))}] \"{info.get('text', '')[:40]}\""
+        return f"Click @{ref} failed: {result.get('error', 'unknown')}"
+
+    # ── Network Wait Strategies ──
+
+    async def wait_for_network_idle(self, timeout_ms: int = 10000, quiet_ms: int = 500) -> str:
+        script = js_scripts.WAIT_NETWORK_IDLE % (timeout_ms, quiet_ms)
+        result = await self._run_js_json(script)
+        if result.get("idle"):
+            return "Network is idle — no pending requests."
+        return f"Network idle timeout: {result.get('error', 'unknown')}"
+
+    async def wait_for_url(self, pattern: str, timeout_ms: int = 10000) -> str:
+        script = js_scripts.WAIT_URL_MATCH % (_js_string(pattern), timeout_ms)
+        result = await self._run_js_json(script)
+        if result.get("success"):
+            return f"URL matched: {result.get('url', '')}"
+        return f"URL match timeout: current={result.get('current', '')}"

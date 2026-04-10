@@ -617,6 +617,187 @@ AUTOFILL_FORM = """
 })(%s)
 """
 
+# ─── Accessibility Tree Snapshot with @ref system ─────────────────────────
+
+ACCESSIBILITY_SNAPSHOT = """
+(function() {
+    const ROLES = {
+        A: 'link', BUTTON: 'button', INPUT: 'textbox', TEXTAREA: 'textbox',
+        SELECT: 'combobox', IMG: 'img', H1: 'heading', H2: 'heading',
+        H3: 'heading', H4: 'heading', H5: 'heading', H6: 'heading',
+        NAV: 'navigation', MAIN: 'main', FORM: 'form', TABLE: 'table',
+        UL: 'list', OL: 'list', LI: 'listitem', LABEL: 'label',
+        HEADER: 'banner', FOOTER: 'contentinfo', SECTION: 'region',
+    };
+    const INTERACTIVE = new Set(['A','BUTTON','INPUT','TEXTAREA','SELECT']);
+    const refs = {};
+    let refIdx = 0;
+    const lines = [];
+
+    function walk(el, depth) {
+        if (!el || el.nodeType !== 1) return;
+        if (el.id && el.id.startsWith('__ai')) return;
+
+        const tag = el.tagName;
+        const ariaRole = el.getAttribute('role') || ROLES[tag] || '';
+        const rect = el.getBoundingClientRect();
+        const visible = rect.width > 0 && rect.height > 0 && rect.bottom > 0 && rect.top < window.innerHeight;
+
+        const isInteractive = INTERACTIVE.has(tag) || el.getAttribute('role') === 'button'
+            || el.onclick || el.getAttribute('tabindex');
+        const text = (el.getAttribute('aria-label') || el.title || el.placeholder
+            || el.alt || el.value || '').trim();
+        const innerText = (el.textContent || '').trim().substring(0, 60);
+        const label = text || (isInteractive ? innerText : '');
+
+        if (ariaRole || isInteractive) {
+            const indent = '  '.repeat(Math.min(depth, 6));
+            let line = indent;
+
+            if (isInteractive && visible) {
+                const ref = 'e' + refIdx;
+                // Build the best selector for this element
+                let sel = tag.toLowerCase();
+                if (el.id) sel += '#' + el.id;
+                else if (el.name) sel += '[name="' + el.name + '"]';
+                else if (el.className && typeof el.className === 'string') {
+                    const cls = el.className.trim().split(/\\s+/).slice(0,2).join('.');
+                    if (cls) sel += '.' + cls;
+                }
+                refs[ref] = {
+                    selector: sel, tag: tag.toLowerCase(), role: ariaRole,
+                    text: label.substring(0, 80),
+                    x: Math.round(rect.left + rect.width / 2),
+                    y: Math.round(rect.top + rect.height / 2)
+                };
+                line += '@' + ref + ' ';
+                refIdx++;
+            }
+
+            line += '[' + (ariaRole || tag.toLowerCase()) + ']';
+
+            if (tag === 'INPUT') {
+                const t = el.type || 'text';
+                line += ' type="' + t + '"';
+                if (el.value) line += ' value="' + el.value.substring(0, 30) + '"';
+            }
+            if (tag.match(/^H[1-6]$/)) line += ' level=' + tag[1];
+            if (el.href) line += ' href="' + el.href.substring(0, 60) + '"';
+            if (el.disabled) line += ' [disabled]';
+            if (el.checked) line += ' [checked]';
+            if (label) line += ' "' + label.substring(0, 60) + '"';
+
+            lines.push(line);
+        }
+
+        for (const child of el.children) walk(child, depth + 1);
+    }
+
+    walk(document.body, 0);
+    return JSON.stringify({snapshot: lines.join('\\n'), refs: refs, refCount: refIdx});
+})()
+"""
+
+# ─── Click by @ref ────────────────────────────────────────────────────────
+
+CLICK_REF = """
+(async function(selector) {
+    const el = document.querySelector(selector);
+    if (!el) return JSON.stringify({success: false, error: 'Ref element not found'});
+
+    el.scrollIntoView({behavior: 'smooth', block: 'center'});
+    await new Promise(r => setTimeout(r, 400));
+
+    const rect = el.getBoundingClientRect();
+    const x = rect.left + rect.width / 2;
+    const y = rect.top + rect.height / 2;
+
+    if (window.__ai) {
+        window.__ai.highlightElement(el);
+        await window.__ai.moveCursorTo(x, y, 600);
+        window.__ai.showRipple(x, y);
+        await new Promise(r => setTimeout(r, 200));
+    }
+
+    ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'].forEach(type => {
+        el.dispatchEvent(new PointerEvent(type, {
+            bubbles: true, cancelable: true, view: window,
+            clientX: x, clientY: y, pointerId: 1, pointerType: 'mouse'
+        }));
+    });
+
+    await new Promise(r => setTimeout(r, 300));
+    if (window.__ai) { window.__ai.hideHighlight(); window.__ai.hideLabel(); }
+
+    return JSON.stringify({
+        success: true, tag: el.tagName.toLowerCase(),
+        text: (el.textContent || '').trim().substring(0, 100)
+    });
+})(%s)
+"""
+
+# ─── Wait for network idle ───────────────────────────────────────────────
+
+WAIT_NETWORK_IDLE = """
+(function(timeoutMs, quietMs) {
+    return new Promise(function(resolve) {
+        let lastActivity = Date.now();
+        let pending = 0;
+        const origFetch = window.fetch;
+        const origXHR = XMLHttpRequest.prototype.open;
+
+        // Intercept fetch
+        window.fetch = function() {
+            pending++; lastActivity = Date.now();
+            return origFetch.apply(this, arguments).finally(() => { pending--; lastActivity = Date.now(); });
+        };
+
+        // Intercept XHR
+        XMLHttpRequest.prototype.open = function() {
+            const xhr = this;
+            xhr.addEventListener('loadstart', () => { pending++; lastActivity = Date.now(); });
+            xhr.addEventListener('loadend', () => { pending--; lastActivity = Date.now(); });
+            return origXHR.apply(this, arguments);
+        };
+
+        const check = setInterval(() => {
+            if (pending === 0 && (Date.now() - lastActivity) >= quietMs) {
+                clearInterval(check);
+                window.fetch = origFetch;
+                XMLHttpRequest.prototype.open = origXHR;
+                resolve(JSON.stringify({success: true, idle: true}));
+            }
+            if (Date.now() - lastActivity > timeoutMs) {
+                clearInterval(check);
+                window.fetch = origFetch;
+                XMLHttpRequest.prototype.open = origXHR;
+                resolve(JSON.stringify({success: false, error: 'Network idle timeout', pending: pending}));
+            }
+        }, 200);
+    });
+})(%s, %s)
+"""
+
+# ─── Wait for URL pattern ────────────────────────────────────────────────
+
+WAIT_URL_MATCH = """
+(function(pattern, timeoutMs) {
+    return new Promise(function(resolve) {
+        const regex = new RegExp(pattern);
+        const check = setInterval(() => {
+            if (regex.test(window.location.href)) {
+                clearInterval(check);
+                resolve(JSON.stringify({success: true, url: window.location.href}));
+            }
+        }, 200);
+        setTimeout(() => {
+            clearInterval(check);
+            resolve(JSON.stringify({success: false, error: 'URL match timeout', current: window.location.href}));
+        }, timeoutMs);
+    });
+})(%s, %s)
+"""
+
 # ─── Hide all visuals (cleanup) ───────────────────────────────────────────
 
 HIDE_VISUALS = """

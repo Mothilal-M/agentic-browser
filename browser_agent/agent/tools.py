@@ -404,6 +404,107 @@ def create_browser_tools(
         understand_page,
     ]
 
+    # -- Agent-browser inspired tools --
+
+    _last_snapshot = {"text": "", "refs": {}}
+
+    async def snapshot() -> str:
+        """Take an accessibility tree snapshot with @ref identifiers. Returns a compact text tree like:
+        @e0 [link] "Home"
+        @e1 [textbox] type="email" placeholder="Email"
+        @e2 [button] "Submit"
+        Use click_ref(@e2) to interact with elements. Much more token-efficient than CSS selectors."""
+        text, refs = await page_controller.take_snapshot()
+        _last_snapshot["text"] = text
+        _last_snapshot["refs"] = refs
+        if not text:
+            return "No accessibility tree could be captured."
+        return f"Snapshot ({len(refs)} interactive elements):\n{text}"
+
+    async def click_ref(ref: str) -> str:
+        """Click an element by its @ref from the last snapshot (e.g. 'e3'). Always take a snapshot() first to get valid refs."""
+        refs = _last_snapshot.get("refs", {})
+        if not refs:
+            return "No snapshot available. Call snapshot() first."
+        result = await page_controller.click_ref(ref, refs)
+        await asyncio.sleep(0.5)
+        return result
+
+    async def fill_ref(ref: str, text: str) -> str:
+        """Fill text into an element by its @ref from the last snapshot (e.g. fill_ref('e3', 'hello@email.com')). Always take a snapshot() first."""
+        refs = _last_snapshot.get("refs", {})
+        info = refs.get(ref)
+        if not info:
+            return f"Ref @{ref} not found. Call snapshot() first."
+        result = await page_controller.type_text(info["selector"], text)
+        return f"Filled @{ref}: {result}"
+
+    async def diff_snapshot() -> str:
+        """Compare the current page state against the last snapshot. Shows what changed (elements added/removed/modified). Useful to verify if an action worked."""
+        from browser_agent.browser.snapshot_diff import diff_snapshots
+        old_text = _last_snapshot.get("text", "")
+        if not old_text:
+            return "No previous snapshot to compare against. Call snapshot() first."
+        new_text, new_refs = await page_controller.take_snapshot()
+        result = diff_snapshots(old_text, new_text)
+        _last_snapshot["text"] = new_text
+        _last_snapshot["refs"] = new_refs
+        return result
+
+    async def diff_screenshot(baseline_b64: str = "") -> str:
+        """Visual pixel diff between current screenshot and a baseline. If no baseline provided, uses the last screenshot taken. Returns mismatch percentage and highlights changed areas in red."""
+        from browser_agent.browser.snapshot_diff import diff_screenshots_pixel
+        view = browser_engine.current_view()
+        if not view:
+            return "No browser view available."
+        await page_controller.hide_visuals()
+        await asyncio.sleep(0.1)
+        current_b64 = screenshot_capture.capture(view)
+        baseline = baseline_b64 or getattr(browser_engine, '_last_screenshot_b64', '')
+        if not baseline:
+            return "No baseline screenshot available. Take a screenshot first."
+        result = diff_screenshots_pixel(baseline, current_b64)
+        return f"Visual diff: {result['mismatch_pct']}% pixels changed ({result['changed_pixels']}/{result['total_pixels']})"
+
+    async def wait_for_network_idle(timeout_ms: int = 10000) -> str:
+        """Wait until no network requests are pending for 500ms. Useful for SPAs that load data after navigation."""
+        return await page_controller.wait_for_network_idle(timeout_ms, 500)
+
+    async def wait_for_url_match(url_pattern: str, timeout_ms: int = 10000) -> str:
+        """Wait until the page URL matches a regex pattern. Example: wait_for_url_match('dashboard') waits until URL contains 'dashboard'."""
+        return await page_controller.wait_for_url(url_pattern, timeout_ms)
+
+    async def export_session(file_path: str, encrypt_key: str = "") -> str:
+        """Export the current browser session (cookies, localStorage) to a JSON file. Optionally encrypt with a key. The session can be imported later to restore login state."""
+        from browser_agent.storage.session_state import export_session_state
+        path = export_session_state(browser_engine, file_path, encrypt_key)
+        return f"Session exported to: {path}"
+
+    async def import_session(file_path: str, encrypt_key: str = "") -> str:
+        """Import a previously exported browser session from a JSON file. Restores cookies and localStorage. Restart browser tab to apply."""
+        from browser_agent.storage.session_state import import_session_state
+        ok = import_session_state(browser_engine, file_path, encrypt_key)
+        return "Session imported successfully. Reload the page to apply." if ok else "Session import failed."
+
+    async def dogfood_test(target_url: str, focus: str = "") -> str:
+        """Start exploratory QA testing on a target URL. The agent will systematically test every button, link, and form, documenting any bugs found. Optionally focus on a specific area (e.g. 'billing page', 'login flow')."""
+        from browser_agent.agent.dogfood import build_dogfood_prompt
+        prompt = build_dogfood_prompt(target_url, focus)
+        return f"ENTERING QA MODE:\n\n{prompt}"
+
+    tools.extend([
+        snapshot,
+        click_ref,
+        fill_ref,
+        diff_snapshot,
+        diff_screenshot,
+        wait_for_network_idle,
+        wait_for_url_match,
+        export_session,
+        import_session,
+        dogfood_test,
+    ])
+
     if memory_db:
         tools.extend([remember, recall])
 

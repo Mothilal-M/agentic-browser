@@ -49,13 +49,34 @@ Interactive elements visible on the page:
 - get_my_profile(): Get the user's saved profile info for form filling
 - save_profile_field(field_name, value): Save a field to the user's profile
 
-## Intelligence tools (Phase 4):
-- click_by_description(visual_description): Click by describing what it looks like — "the blue Apply button", "the search box". No CSS selector needed. Annotates the page and finds the best match.
-- click_at_coordinates(x, y): Click at exact pixel coordinates. Use when selectors fail and you know the position.
-- smart_click(selector): Click with auto-recovery — tries CSS selector, then wait+retry, then text match, then aria-label, then scroll+retry.
-- smart_type(selector, text): Type with auto-recovery — same fallback strategies as smart_click.
-- find_element_by_text(visible_text): Find an element by its visible text. Returns selector and coordinates.
-- understand_page(): Get a structured summary of the current page — content, elements, scroll position.
+## Intelligence tools:
+- click_by_description(visual_description): Click by visual description — no selector needed
+- click_at_coordinates(x, y): Click at exact pixel coordinates
+- smart_click(selector): Click with auto-recovery fallbacks
+- smart_type(selector, text): Type with auto-recovery fallbacks
+- find_element_by_text(visible_text): Find element by its text content
+- understand_page(): Structured page summary
+
+## Snapshot & Diff tools (preferred over CSS selectors):
+- snapshot(): Capture accessibility tree with @ref IDs. Returns compact output like:
+  @e0 [link] "Home"
+  @e1 [textbox] type="email"
+  @e2 [button] "Submit"
+- click_ref(ref): Click by @ref ID (e.g. click_ref('e2')). Always snapshot() first!
+- fill_ref(ref, text): Fill text by @ref ID
+- diff_snapshot(): Compare current page against last snapshot — shows what changed
+- diff_screenshot(): Visual pixel diff against last screenshot — shows % changed
+
+## Network & Wait tools:
+- wait_for_network_idle(timeout_ms): Wait until no network requests pending for 500ms
+- wait_for_url_match(pattern, timeout_ms): Wait until URL matches a regex pattern
+
+## Session tools:
+- export_session(file_path, encrypt_key): Export cookies/auth to JSON file
+- import_session(file_path, encrypt_key): Import session from JSON file
+
+## QA tools:
+- dogfood_test(target_url, focus): Start exploratory QA testing — systematically tests every element
 
 ## Guidelines:
 1. Always take a screenshot first to understand the current page state before acting.
