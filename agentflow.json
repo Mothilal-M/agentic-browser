@@ -1,0 +1,9 @@
+{
+  "agent": "react_sync:app",
+  "env": ".env",
+  "auth": null,
+  "checkpointer": null,
+  "injectq": null,
+  "store": null,
+  "thread_name_generator": null
+}
