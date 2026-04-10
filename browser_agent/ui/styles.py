@@ -438,6 +438,15 @@ QFrame#skill_card:hover {{
     background: rgba(168,85,247,0.08); border-color: rgba(168,85,247,0.20);
 }}
 
+/* --- Rule Cards --- */
+QFrame#rule_card {{
+    background: rgba(245,158,11,0.04); border: 1px solid rgba(245,158,11,0.10);
+    border-radius: {RADIUS_MD}px; margin: 2px 0px;
+}}
+QFrame#rule_card:hover {{
+    background: rgba(245,158,11,0.08); border-color: rgba(245,158,11,0.20);
+}}
+
 /* --- Status Bar --- */
 QStatusBar {{
     background-color: rgba(8,8,15,0.9); color: {DARK_TEXT_MUTED};

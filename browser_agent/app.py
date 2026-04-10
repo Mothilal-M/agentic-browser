@@ -28,6 +28,7 @@ from browser_agent.multiagent.coordinator import MultiAgentCoordinator
 from browser_agent.predictive.pattern_tracker import PatternTracker
 from browser_agent.autonomous.rules_engine import RulesEngine
 from browser_agent.ui.main_window import MainWindow
+from browser_agent.ui.rules_panel import RulesPanel
 from browser_agent.ui.skills_panel import SkillsPanel
 from browser_agent.ui.thread_selector import ThreadSelector
 
@@ -101,15 +102,18 @@ def main() -> int:
     # UI
     window = MainWindow(config, engine)
 
-    # Embed history & skills inside chat panel (overlay pages)
+    # Embed history, skills, and rules inside chat panel (overlay pages)
     thread_selector = ThreadSelector()
     skills_panel = SkillsPanel()
+    rules_panel = RulesPanel()
     window.chat_panel.set_history_widget(thread_selector)
     window.chat_panel.set_skills_widget(skills_panel)
+    window.chat_panel.set_rules_widget(rules_panel)
 
     # Wire header buttons
     window.chat_panel.history_toggled.connect(window.chat_panel.toggle_history)
     window.chat_panel.skills_toggled.connect(window.chat_panel.toggle_skills)
+    window.chat_panel.rules_toggled.connect(window.chat_panel.toggle_rules)
 
     window.show()
 
@@ -305,6 +309,26 @@ def main() -> int:
         )
     )
 
+    # --- Wire rules panel ---
+    def refresh_rules():
+        rules_panel.set_rules(rules_engine.list_rules())
+
+    def on_rule_added(name: str, trigger: str, action_prompt: str):
+        rules_engine.add_rule(name, trigger, action_prompt)
+        refresh_rules()
+
+    def on_rule_toggled(rule_id: str, enabled: bool):
+        rules_engine.toggle_rule(rule_id, enabled)
+        refresh_rules()
+
+    def on_rule_deleted(rule_id: str):
+        rules_engine.delete_rule(rule_id)
+        refresh_rules()
+
+    rules_panel.rule_added.connect(on_rule_added)
+    rules_panel.rule_toggled.connect(on_rule_toggled)
+    rules_panel.rule_deleted.connect(on_rule_deleted)
+
     # --- Wire pattern tracking (learn from browsing) ---
     def on_page_visit(url: str, title: str):
         pattern_tracker.track_visit(url, title)
@@ -320,6 +344,7 @@ def main() -> int:
     # Initial load
     refresh_threads()
     refresh_skills()
+    refresh_rules()
 
     with loop:
         loop.run_forever()

@@ -34,6 +34,7 @@ from browser_agent.ui.styles import (
     SPACE_3,
     SPACE_4,
     SUCCESS,
+    WARNING,
     fade_in,
     label_style,
 )
