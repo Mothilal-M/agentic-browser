@@ -20,10 +20,12 @@ class BrowserPanel(QWidget):
     page_loaded = pyqtSignal(str, str)  # url, title
     title_changed = pyqtSignal(str)
 
-    def __init__(self, engine: BrowserEngine, home_url: str = "https://www.google.com") -> None:
+    def __init__(self, engine: BrowserEngine, home_url: str = "https://duckduckgo.com",
+                 search_template: str = "https://duckduckgo.com/?q={query}") -> None:
         super().__init__()
         self._engine = engine
         self._home_url = home_url
+        self._search_template = search_template
 
         # -- Navigation bar --
         nav_bar = QWidget()
@@ -124,7 +126,11 @@ class BrowserPanel(QWidget):
             widget.deleteLater()
 
     def navigate_to(self, url: str) -> None:
-        if not url.startswith(("http://", "https://", "file://")):
+        url = url.strip()
+        if self._is_search_query(url):
+            from urllib.parse import quote_plus
+            url = self._search_template.replace("{query}", quote_plus(url))
+        elif not url.startswith(("http://", "https://", "file://")):
             url = "https://" + url
         view = self.current_view()
         if view:
@@ -177,3 +183,21 @@ class BrowserPanel(QWidget):
         view = self.current_view()
         if view:
             view.reload()
+
+    @staticmethod
+    def _is_search_query(text: str) -> bool:
+        """Return True if the text looks like a search query rather than a URL."""
+        # Has spaces → definitely a search
+        if " " in text:
+            return True
+        # No dots at all → search (e.g. "python tutorials")
+        if "." not in text:
+            return True
+        # Starts with http/https/file → URL
+        if text.startswith(("http://", "https://", "file://")):
+            return False
+        # Has a TLD-like pattern → URL (e.g. "google.com", "example.org")
+        import re
+        if re.match(r'^[\w.-]+\.\w{2,}(/.*)?$', text):
+            return False
+        return True

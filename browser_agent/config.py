@@ -18,6 +18,34 @@ def _default_storage_path() -> str:
     return str(Path(base) / "BrowserAgent" / "profile")
 
 
+SEARCH_ENGINES = {
+    "duckduckgo": {
+        "home": "https://duckduckgo.com",
+        "search": "https://duckduckgo.com/?q={query}",
+    },
+    "google": {
+        "home": "https://www.google.com",
+        "search": "https://www.google.com/search?q={query}",
+    },
+    "perplexity": {
+        "home": "https://www.perplexity.ai",
+        "search": "https://www.perplexity.ai/search?q={query}",
+    },
+    "brave": {
+        "home": "https://search.brave.com",
+        "search": "https://search.brave.com/search?q={query}",
+    },
+    "bing": {
+        "home": "https://www.bing.com",
+        "search": "https://www.bing.com/search?q={query}",
+    },
+    "you": {
+        "home": "https://you.com",
+        "search": "https://you.com/search?q={query}",
+    },
+}
+
+
 class AppConfig(BaseSettings):
     # LLM
     model: str = "gemini-3-flash-preview"
@@ -29,7 +57,18 @@ class AppConfig(BaseSettings):
     viewport_width: int = 1280
     viewport_height: int = 900
     persistent_storage_path: str = Field(default_factory=_default_storage_path)
-    home_url: str = "https://www.google.com"
+    search_engine: str = "duckduckgo"  # duckduckgo, google, perplexity, brave, bing, you
+    home_url: str = ""  # auto-set from search_engine if empty
+
+    @property
+    def resolved_home_url(self) -> str:
+        if self.home_url:
+            return self.home_url
+        return SEARCH_ENGINES.get(self.search_engine, {}).get("home", "https://duckduckgo.com")
+
+    @property
+    def search_url_template(self) -> str:
+        return SEARCH_ENGINES.get(self.search_engine, {}).get("search", "https://duckduckgo.com/?q={query}")
 
     # Screenshot
     screenshot_quality: int = 70

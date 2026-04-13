@@ -31,7 +31,11 @@ class MainWindow(QMainWindow):
         self._setup_statusbar()
 
     def _setup_ui(self) -> None:
-        self.browser_panel = BrowserPanel(self._engine, self._config.home_url)
+        self.browser_panel = BrowserPanel(
+            self._engine,
+            self._config.resolved_home_url,
+            self._config.search_url_template,
+        )
         self.chat_panel = ChatPanel()
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
