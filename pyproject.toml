@@ -29,7 +29,7 @@ dependencies = [
     "PyQt6>=6.6",
     "PyQt6-WebEngine>=6.6",
     "qasync>=0.27",
-    "pydantic-settings>=2.0",
+    "pydantic-settings>=2.13.1",
     "python-dotenv>=1.0",
     "pyyaml>=6.0",
 ]
