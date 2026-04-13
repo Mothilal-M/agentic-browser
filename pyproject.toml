@@ -26,8 +26,8 @@ classifiers = [
 ]
 dependencies = [
     "10xscale-agentflow[google-genai]>=0.7.2",
-    "PyQt6>=6.6",
-    "PyQt6-WebEngine>=6.6",
+    "PyQt6>=6.11.0",
+    "PyQt6-WebEngine>=6.11.0",
     "qasync>=0.27",
     "pydantic-settings>=2.0",
     "python-dotenv>=1.0",
