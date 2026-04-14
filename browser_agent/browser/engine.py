@@ -59,20 +59,28 @@ class CookiePersistence:
     Qt6 named profiles don't create a Cookies SQLite file with setPersistentStoragePath.
     This class intercepts all cookies via cookieAdded signal and saves them to a JSON file.
     On startup, it restores cookies from the JSON file.
+    Auto-saves every 30 seconds if cookies changed.
     """
 
     def __init__(self, cookie_store: QWebEngineCookieStore, save_path: Path) -> None:
+        from PyQt6.QtCore import QTimer
+
         self._store = cookie_store
         self._save_path = save_path
-        self._cookies: dict[str, dict] = {}  # key → cookie data
+        self._cookies: dict[str, dict] = {}
         self._dirty = False
 
-        # Connect to cookie events
+        # Restore BEFORE connecting signals (so restored cookies don't re-trigger save)
+        self._restore()
+
+        # NOW connect signals — only new cookies from browsing will be captured
         self._store.cookieAdded.connect(self._on_cookie_added)
         self._store.cookieRemoved.connect(self._on_cookie_removed)
 
-        # Restore saved cookies
-        self._restore()
+        # Auto-save timer — every 30 seconds
+        self._save_timer = QTimer()
+        self._save_timer.timeout.connect(self.save)
+        self._save_timer.start(30_000)
 
     def _cookie_key(self, cookie: QNetworkCookie) -> str:
         return f"{cookie.domain()}|{cookie.path()}|{cookie.name().data().decode()}"
@@ -142,26 +150,23 @@ class BrowserEngine:
         self._config = config
         self._profile = self._create_profile()
 
-        # Activate the cookie store — MUST be done before any page loads
-        cookie_store = self._profile.cookieStore()
-        cookie_store.loadAllCookies()
-
+        # Get cookie store ONCE and keep reference
+        self._cookie_store = self._profile.cookieStore()
+        self._cookie_store.loadAllCookies()
         self._cookie_persistence = CookiePersistence(
-            cookie_store,
+            self._cookie_store,
             Path(config.persistent_storage_path) / "cookies.json",
         )
         self._incognito_profile: QWebEngineProfile | None = None
         self._views: list[QWebEngineView] = []
 
     def _create_profile(self) -> QWebEngineProfile:
-        storage_path = self._config.persistent_storage_path
-        Path(storage_path).mkdir(parents=True, exist_ok=True)
-
+        # DON'T set persistentStoragePath — it breaks cookie store signals on Qt6.
+        # Let Qt manage storage at AppData/Local/<OrgName>/<AppName>/QtWebEngine/
+        # We handle cookies ourselves via CookiePersistence.
         profile = QWebEngineProfile("AgenticBrowser")
-        profile.setPersistentStoragePath(storage_path)
-        profile.setCachePath(str(Path(storage_path) / "cache"))
         profile.setPersistentCookiesPolicy(
-            QWebEngineProfile.PersistentCookiesPolicy.ForcePersistentCookies
+            QWebEngineProfile.PersistentCookiesPolicy.AllowPersistentCookies
         )
 
         profile.setHttpUserAgent(CHROME_UA)
