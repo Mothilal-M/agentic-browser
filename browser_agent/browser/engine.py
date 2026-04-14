@@ -150,21 +150,25 @@ class BrowserEngine:
         self._config = config
         self._profile = self._create_profile()
 
-        # Get cookie store ONCE and keep reference
+        # Cookie persistence — signals connected first, then loadAllCookies
+        self._cookies_path = Path(config.persistent_storage_path) / "cookies.json"
         self._cookie_store = self._profile.cookieStore()
-        self._cookie_store.loadAllCookies()
         self._cookie_persistence = CookiePersistence(
-            self._cookie_store,
-            Path(config.persistent_storage_path) / "cookies.json",
+            self._cookie_store, self._cookies_path,
         )
+        # loadAllCookies AFTER signals connected — ensures cookieAdded fires
+        self._cookie_store.loadAllCookies()
         self._incognito_profile: QWebEngineProfile | None = None
         self._views: list[QWebEngineView] = []
 
     def _create_profile(self) -> QWebEngineProfile:
-        # DON'T set persistentStoragePath — it breaks cookie store signals on Qt6.
-        # Let Qt manage storage at AppData/Local/<OrgName>/<AppName>/QtWebEngine/
-        # We handle cookies ourselves via CookiePersistence.
+        storage_path = self._config.persistent_storage_path
+        Path(storage_path).mkdir(parents=True, exist_ok=True)
+
         profile = QWebEngineProfile("AgenticBrowser")
+        profile.setPersistentStoragePath(storage_path)
+        profile.setCachePath(str(Path(storage_path) / "cache"))
+        # AllowPersistentCookies — we handle cookie persistence ourselves via CookiePersistence
         profile.setPersistentCookiesPolicy(
             QWebEngineProfile.PersistentCookiesPolicy.AllowPersistentCookies
         )
@@ -182,8 +186,56 @@ class BrowserEngine:
         return profile
 
     def save_cookies(self) -> None:
-        """Call this on app shutdown to persist cookies."""
-        self._cookie_persistence.save()
+        """Save cookies to disk. Uses CookiePersistence if signals worked, otherwise falls back to JS."""
+        if self._cookie_persistence and len(self._cookie_persistence._cookies) > 0:
+            self._cookie_persistence.save()
+        else:
+            # Fallback: extract cookies via JavaScript from current page
+            self._save_cookies_via_js()
+
+    def _save_cookies_via_js(self) -> None:
+        """Extract document.cookie from the current page and save to JSON."""
+        page = self.current_page()
+        if not page:
+            return
+
+        def on_result(cookies_str):
+            if not cookies_str:
+                return
+            cookies = []
+            current_url = page.url()
+            domain = current_url.host()
+            for pair in cookies_str.split(";"):
+                pair = pair.strip()
+                if "=" in pair:
+                    name, value = pair.split("=", 1)
+                    cookies.append({
+                        "name": name.strip(),
+                        "value": value.strip(),
+                        "domain": f".{domain}",
+                        "path": "/",
+                        "secure": current_url.scheme() == "https",
+                        "httponly": False,
+                    })
+            if cookies:
+                try:
+                    self._cookies_path.parent.mkdir(parents=True, exist_ok=True)
+                    # Merge with existing
+                    existing = []
+                    if self._cookies_path.exists():
+                        existing = json.loads(self._cookies_path.read_text(encoding="utf-8"))
+                    # Merge by name+domain key
+                    by_key = {f"{c['domain']}|{c['name']}": c for c in existing}
+                    for c in cookies:
+                        by_key[f"{c['domain']}|{c['name']}"] = c
+                    self._cookies_path.write_text(
+                        json.dumps(list(by_key.values()), indent=2), encoding="utf-8"
+                    )
+                    logger.info("Saved %d cookies via JS fallback", len(by_key))
+                except Exception as e:
+                    logger.warning("JS cookie save failed: %s", e)
+
+        page.runJavaScript("document.cookie", on_result)
 
     @property
     def profile(self) -> QWebEngineProfile:
