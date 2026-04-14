@@ -125,7 +125,12 @@ class CookiePersistence:
                 cookie.setPath(c["path"])
                 cookie.setSecure(c.get("secure", False))
                 cookie.setHttpOnly(c.get("httponly", False))
-                self._store.setCookie(cookie)
+
+                # Build the origin URL from domain — required for setCookie to work
+                domain = c["domain"].lstrip(".")
+                scheme = "https" if c.get("secure") else "http"
+                origin = QUrl(f"{scheme}://{domain}{c['path']}")
+                self._store.setCookie(cookie, origin)
                 count += 1
             logger.info("Restored %d cookies from %s", count, self._save_path)
         except Exception as e:
@@ -136,8 +141,13 @@ class BrowserEngine:
     def __init__(self, config: AppConfig) -> None:
         self._config = config
         self._profile = self._create_profile()
+
+        # Activate the cookie store — MUST be done before any page loads
+        cookie_store = self._profile.cookieStore()
+        cookie_store.loadAllCookies()
+
         self._cookie_persistence = CookiePersistence(
-            self._profile.cookieStore(),
+            cookie_store,
             Path(config.persistent_storage_path) / "cookies.json",
         )
         self._incognito_profile: QWebEngineProfile | None = None
