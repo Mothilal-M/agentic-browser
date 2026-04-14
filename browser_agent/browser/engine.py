@@ -61,20 +61,41 @@ UA_OVERRIDE_JS = f"""
 class BrowserEngine:
     def __init__(self, config: AppConfig) -> None:
         self._config = config
+        self._cleanup_stale_caches()
         self._profile = self._create_profile()
         self._incognito_profile: QWebEngineProfile | None = None
         self._views: list[QWebEngineView] = []
+
+    def _cleanup_stale_caches(self) -> None:
+        """Remove old cache_PID dirs from previous instances that didn't clean up."""
+        import shutil
+        storage = Path(self._config.persistent_storage_path)
+        if not storage.exists():
+            return
+        for d in storage.iterdir():
+            if d.is_dir() and d.name.startswith("cache_"):
+                try:
+                    shutil.rmtree(d, ignore_errors=True)
+                except Exception:
+                    pass  # locked by another running instance — skip
 
     def _create_profile(self) -> QWebEngineProfile:
         profile = QWebEngineProfile("BrowserAgentProfile")
 
         storage_path = self._config.persistent_storage_path
         Path(storage_path).mkdir(parents=True, exist_ok=True)
+
+        # Persistent storage for cookies, localStorage, IndexedDB
         profile.setPersistentStoragePath(storage_path)
         profile.setPersistentCookiesPolicy(
             QWebEngineProfile.PersistentCookiesPolicy.ForcePersistentCookies
         )
-        profile.setCachePath(str(Path(storage_path) / "cache"))
+
+        # Separate cache dir with PID to avoid lock conflicts between instances
+        import os
+        cache_dir = Path(storage_path) / f"cache_{os.getpid()}"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        profile.setCachePath(str(cache_dir))
 
         # HTTP-level user agent
         profile.setHttpUserAgent(CHROME_UA)
