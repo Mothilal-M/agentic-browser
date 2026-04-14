@@ -277,12 +277,25 @@ PRESS_KEY = """
     }
 
     const el = document.activeElement || document.body;
-    const opts = {key: key, code: 'Key' + key, bubbles: true, cancelable: true};
+
+    // Map key names to correct KeyboardEvent codes
+    const codeMap = {
+        Enter: 'Enter', Tab: 'Tab', Escape: 'Escape', Backspace: 'Backspace',
+        ArrowUp: 'ArrowUp', ArrowDown: 'ArrowDown', ArrowLeft: 'ArrowLeft', ArrowRight: 'ArrowRight',
+        Delete: 'Delete', Home: 'Home', End: 'End', PageUp: 'PageUp', PageDown: 'PageDown',
+        ' ': 'Space'
+    };
+    const keyCodeMap = {Enter: 13, Tab: 9, Escape: 27, Backspace: 8, Delete: 46, ' ': 32};
+    const code = codeMap[key] || ('Key' + key.toUpperCase());
+    const keyCode = keyCodeMap[key] || key.charCodeAt(0);
+
+    const opts = {key: key, code: code, keyCode: keyCode, which: keyCode, bubbles: true, cancelable: true};
 
     el.dispatchEvent(new KeyboardEvent('keydown', opts));
     el.dispatchEvent(new KeyboardEvent('keypress', opts));
     el.dispatchEvent(new KeyboardEvent('keyup', opts));
 
+    // For Enter on forms
     if (key === 'Enter' && el.form) {
         el.form.dispatchEvent(new Event('submit', {bubbles: true, cancelable: true}));
     }
@@ -290,7 +303,7 @@ PRESS_KEY = """
     await new Promise(r => setTimeout(r, 500));
     if (window.__ai) window.__ai.hideLabel();
 
-    return JSON.stringify({success: true, key: key});
+    return JSON.stringify({success: true, key: key, target: el.tagName.toLowerCase()});
 })(%s)
 """
 
