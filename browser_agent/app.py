@@ -338,6 +338,7 @@ def main() -> int:
     # --- Wire pattern tracking (learn from browsing) ---
     def on_page_visit(url: str, title: str):
         pattern_tracker.track_visit(url, title)
+        engine.save_cookies()  # save cookies after each page load
 
     window.browser_panel.page_loaded.connect(on_page_visit)
 
@@ -355,7 +356,8 @@ def main() -> int:
     with loop:
         loop.run_forever()
 
-    # Cleanup
+    # Cleanup — save cookies before closing
+    engine.save_cookies()
     rules_engine.stop()
     conv_db.close()
     memory_db.close()
