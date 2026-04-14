@@ -80,7 +80,9 @@ class BrowserEngine:
                     pass  # locked by another running instance — skip
 
     def _create_profile(self) -> QWebEngineProfile:
-        profile = QWebEngineProfile("BrowserAgentProfile")
+        # Use the default profile — stores cookies in persistentStoragePath
+        # Named profiles on Qt6/Windows store cookies in a separate Qt-managed location
+        profile = QWebEngineProfile.defaultProfile()
 
         storage_path = self._config.persistent_storage_path
         Path(storage_path).mkdir(parents=True, exist_ok=True)
