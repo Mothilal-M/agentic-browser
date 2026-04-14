@@ -130,6 +130,7 @@ def main() -> int:
 
     window.chat_panel.message_submitted.connect(on_message)
     window.chat_panel.stop_requested.connect(controller.stop)
+    window.chat_panel.continue_requested.connect(controller.continue_waiting_task)
 
     # --- Wire agent → chat ---
     signals = controller.signals
@@ -144,6 +145,13 @@ def main() -> int:
     signals.thinking_update.connect(window.chat_panel.append_thinking)
     signals.error_occurred.connect(window.chat_panel.append_error)
     signals.agent_busy.connect(window.chat_panel.set_busy)
+    signals.help_requested.connect(window.chat_panel.append_help_request)
+
+    def on_task_status_changed(status: str, detail: str) -> None:
+        if status != "waiting_for_user":
+            window.chat_panel.set_waiting(False)
+
+    signals.task_status_changed.connect(on_task_status_changed)
 
     # --- Wire thread selector ---
     def refresh_threads():
@@ -158,7 +166,13 @@ def main() -> int:
             if msg.role == "user":
                 window.chat_panel.append_user_message(msg.content)
             elif msg.role == "assistant":
-                window.chat_panel.append_assistant_message(msg.content)
+                if (msg.metadata or {}).get("kind") == "help_request":
+                    payload = dict(msg.metadata)
+                    payload.setdefault("reason", msg.content)
+                    payload.setdefault("instructions", msg.detail)
+                    window.chat_panel.append_help_request(payload)
+                else:
+                    window.chat_panel.append_assistant_message(msg.content)
             elif msg.role == "tool":
                 window.chat_panel.append_tool_message("tool", msg.content)
         refresh_threads()

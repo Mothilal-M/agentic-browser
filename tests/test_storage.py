@@ -125,3 +125,8 @@ class TestUserProfile:
         result = profile.format_for_prompt()
         assert "Jane" in result
         assert "jane@example.com" in result
+
+    def test_missing_fields(self, profile):
+        profile.set("full_name", "Jane")
+        missing = profile.missing_fields(["full_name", "email", "resume_path"])
+        assert missing == ["email", "resume_path"]

@@ -1,11 +1,8 @@
-"""Action confirmation guardrails — pause agent on sensitive operations.
-
-Detects dangerous keywords in tool arguments and requests user confirmation
-before executing. Prevents accidental deletions, payments, and data loss.
-"""
+"""Action confirmation guardrails — classify sensitive operations."""
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import logging
 import re
 
@@ -32,7 +29,18 @@ WARNING_KEYWORDS = [
 MONITORED_TOOLS = {
     "click_element", "smart_click", "click_by_description",
     "click_shadow_element", "click_at_coordinates", "press_key",
+    "click_text",
 }
+
+
+@dataclass
+class GuardrailDecision:
+    blocker_type: str
+    severity: str
+    tool_name: str
+    keyword: str
+    message: str
+    args: dict
 
 
 class Guardrails:
@@ -56,10 +64,10 @@ class Guardrails:
         if value in ("low", "medium", "high"):
             self._sensitivity = value
 
-    def check(self, tool_name: str, args: dict) -> str | None:
+    def check(self, tool_name: str, args: dict) -> GuardrailDecision | None:
         """Check if a tool call needs confirmation.
 
-        Returns a warning message string if confirmation is needed, or None if safe.
+        Returns a structured decision if confirmation is needed, or None if safe.
         """
         if tool_name not in MONITORED_TOOLS:
             return None
@@ -77,26 +85,46 @@ class Guardrails:
         # Check critical keywords (always flagged)
         for kw in CRITICAL_KEYWORDS:
             if kw in scan_text:
-                return (
-                    f"\u26a0\ufe0f **CRITICAL**: About to perform a sensitive action — "
-                    f"detected '{kw}' in {tool_name}({_format_args(args)}). "
-                    f"Please confirm: should I proceed? (Reply 'yes' to continue)"
+                return GuardrailDecision(
+                    blocker_type="confirmation_required",
+                    severity="critical",
+                    tool_name=tool_name,
+                    keyword=kw,
+                    args=args,
+                    message=(
+                        f"About to perform a sensitive action — detected '{kw}' in "
+                        f"{tool_name}({_format_args(args)}). Confirm before proceeding."
+                    ),
                 )
 
         # Check warning keywords (medium+ sensitivity)
         if self._sensitivity in ("medium", "high"):
             for kw in WARNING_KEYWORDS:
                 if re.search(rf'\b{re.escape(kw)}\b', scan_text):
-                    return (
-                        f"\u26a0\ufe0f About to {tool_name} — detected '{kw}' in the action. "
-                        f"Confirm? (Reply 'yes' to continue)"
+                    return GuardrailDecision(
+                        blocker_type="confirmation_required",
+                        severity="warning",
+                        tool_name=tool_name,
+                        keyword=kw,
+                        args=args,
+                        message=(
+                            f"About to {tool_name} — detected '{kw}' in the action. "
+                            f"Ask the user to confirm before proceeding."
+                        ),
                     )
 
         # High sensitivity — flag all monitored tool calls
         if self._sensitivity == "high":
-            return (
-                f"\u2139\ufe0f About to {tool_name}({_format_args(args)}). "
-                f"Confirm? (Reply 'yes' to continue)"
+            return GuardrailDecision(
+                blocker_type="confirmation_required",
+                severity="info",
+                tool_name=tool_name,
+                keyword="monitored_action",
+                args=args,
+                message=(
+                    f"About to {tool_name}({_format_args(args)}). "
+                    f"High-sensitivity mode requires confirmation."
+                ),
             )
 
         return None

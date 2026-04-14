@@ -24,6 +24,7 @@ DEFAULT_FIELDS = [
     ("full_name", "", "Full Name"),
     ("email", "", "Email Address"),
     ("phone", "", "Phone Number"),
+    ("current_location", "", "Current Location"),
     ("address", "", "Street Address"),
     ("city", "", "City"),
     ("state", "", "State / Province"),
@@ -32,10 +33,15 @@ DEFAULT_FIELDS = [
     ("date_of_birth", "", "Date of Birth"),
     ("linkedin_url", "", "LinkedIn URL"),
     ("github_url", "", "GitHub URL"),
+    ("portfolio_url", "", "Portfolio URL"),
     ("resume_path", "", "Resume File Path"),
+    ("cover_letter_text", "", "Cover Letter Text"),
     ("current_company", "", "Current Company"),
     ("current_title", "", "Current Job Title"),
     ("years_experience", "", "Years of Experience"),
+    ("work_authorization", "", "Work Authorization"),
+    ("sponsorship_required", "", "Requires Sponsorship"),
+    ("notice_period", "", "Notice Period"),
 ]
 
 
@@ -101,6 +107,17 @@ class UserProfile:
     def to_dict(self) -> dict[str, str]:
         """Return all filled fields as {key: value}."""
         return {f.key: f.value for f in self.get_filled()}
+
+    def missing_fields(self, keys: list[str]) -> list[str]:
+        """Return profile keys that are empty or unknown."""
+        missing = []
+        for key in keys:
+            normalized = key.strip()
+            if not normalized:
+                continue
+            if not self.get(normalized).strip():
+                missing.append(normalized)
+        return missing
 
     def format_for_prompt(self) -> str:
         """Format profile as text for the agent's system prompt."""

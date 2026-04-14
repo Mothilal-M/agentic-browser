@@ -183,6 +183,18 @@ class PageController:
         result = await self._run_js_json(js_scripts.DETECT_CAPTCHA)
         return result
 
+    async def inspect_auth_state(self) -> dict:
+        """Return structured auth/challenge state for the current page."""
+        result = await self.detect_captcha()
+        return {
+            "signals": result.get("signals", []),
+            "requires_login": bool(result.get("requiresLogin")),
+            "requires_otp": bool(result.get("requiresOtp")),
+            "requires_captcha": bool(result.get("requiresCaptcha")),
+            "blocker_type": result.get("blockerType", ""),
+            "detected": bool(result.get("detected")),
+        }
+
     async def query_shadow_dom(self, selector: str) -> dict:
         script = js_scripts.QUERY_SHADOW_DOM % _js_string(selector)
         return await self._run_js_json(script)

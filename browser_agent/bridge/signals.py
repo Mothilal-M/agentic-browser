@@ -11,3 +11,5 @@ class AgentSignals(QObject):
     thinking_update = pyqtSignal(str)
     error_occurred = pyqtSignal(str)
     agent_busy = pyqtSignal(bool)
+    help_requested = pyqtSignal(object)
+    task_status_changed = pyqtSignal(str, str)

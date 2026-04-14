@@ -23,7 +23,9 @@ from browser_agent.browser.screenshot import ScreenshotCapture
 from browser_agent.config import AppConfig
 
 if TYPE_CHECKING:
+    from browser_agent.agent.collaboration import CollaborationManager
     from browser_agent.agent.error_recovery import ErrorRecovery
+    from browser_agent.agent.guardrails import Guardrails
     from browser_agent.agent.vision import VisionDetector
     from browser_agent.multiagent.coordinator import MultiAgentCoordinator
     from browser_agent.skills.player import SkillPlayer
@@ -93,12 +95,15 @@ def build_agent_graph(
     vision_detector: VisionDetector | None = None,
     error_recovery: ErrorRecovery | None = None,
     multi_agent: MultiAgentCoordinator | None = None,
+    guardrails: Guardrails | None = None,
+    collaboration_manager: CollaborationManager | None = None,
     tool_tier: str = "standard",
 ):
     all_tools = create_browser_tools(
         page_controller, screenshot_capture, browser_engine,
         memory_db, skill_store, skill_player, user_profile,
         vision_detector, error_recovery, multi_agent,
+        guardrails, collaboration_manager,
     )
 
     # Filter tools by task complexity tier

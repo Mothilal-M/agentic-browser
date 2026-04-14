@@ -480,7 +480,53 @@ DETECT_CAPTCHA = """
         bodyText.includes('enter the code') || bodyText.includes('two-factor'))
         signals.push('2fa_text');
 
-    return JSON.stringify({detected: signals.length > 0, signals: signals});
+    const passwordInputs = document.querySelectorAll(
+        'input[type="password"], input[name*="password" i], input[autocomplete="current-password"], input[autocomplete="new-password"]'
+    );
+    if (passwordInputs.length > 0) signals.push('password_input');
+
+    const loginCtas = Array.from(
+        document.querySelectorAll('button, a, input[type="submit"], [role="button"]')
+    ).filter((el) => {
+        const text = (
+            el.innerText ||
+            el.textContent ||
+            el.value ||
+            el.getAttribute('aria-label') ||
+            ''
+        ).toLowerCase().trim();
+        return /sign in|log in|login|continue with|verify|authenticate/.test(text);
+    });
+    if (loginCtas.length > 0) signals.push('login_cta');
+
+    const bodySuggestsLogin =
+        bodyText.includes('sign in') ||
+        bodyText.includes('log in') ||
+        bodyText.includes('password') ||
+        bodyText.includes('one-time code') ||
+        bodyText.includes('two-factor authentication');
+
+    const requiresLogin = passwordInputs.length > 0 || bodySuggestsLogin;
+    const requiresOtp = signals.includes('2fa_otp') || signals.includes('2fa_text');
+    const requiresCaptcha =
+        signals.includes('recaptcha') ||
+        signals.includes('hcaptcha') ||
+        signals.includes('cloudflare_turnstile') ||
+        signals.includes('generic_captcha');
+
+    let blockerType = '';
+    if (requiresCaptcha) blockerType = 'captcha_required';
+    else if (requiresOtp) blockerType = 'two_factor_required';
+    else if (requiresLogin) blockerType = 'login_required';
+
+    return JSON.stringify({
+        detected: signals.length > 0,
+        signals: signals,
+        requiresLogin: requiresLogin,
+        requiresOtp: requiresOtp,
+        requiresCaptcha: requiresCaptcha,
+        blockerType: blockerType,
+    });
 })()
 """
 

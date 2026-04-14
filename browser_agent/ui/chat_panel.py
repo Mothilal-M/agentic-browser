@@ -12,6 +12,7 @@ from PyQt6.QtWidgets import (
 
 from browser_agent.ui.animated_input import AnimatedChatInput
 from browser_agent.ui.chat_message_widget import ChatMessageWidget
+from browser_agent.ui.help_request_widget import HelpRequestWidget
 from browser_agent.ui.tool_call_widget import ToolCallGroup
 from browser_agent.ui.styles import (
     ACCENT_PRIMARY,
@@ -105,6 +106,7 @@ class TypingIndicator(QWidget):
 class ChatPanel(QWidget):
     message_submitted = pyqtSignal(str)
     stop_requested = pyqtSignal()
+    continue_requested = pyqtSignal()
     # Signals for history/skills actions (wired in app.py)
     new_thread_requested = pyqtSignal()
     history_toggled = pyqtSignal()
@@ -240,6 +242,8 @@ class ChatPanel(QWidget):
         self._streaming_widget: ChatMessageWidget | None = None
         self._typing_indicator: TypingIndicator | None = None
         self._tool_group: ToolCallGroup | None = None
+        self._help_widget: HelpRequestWidget | None = None
+        self._waiting_for_user = False
 
     # ── Overlay management ──
 
@@ -351,11 +355,13 @@ class ChatPanel(QWidget):
 
     def append_user_message(self, text: str) -> None:
         self._tool_group = None
+        self._help_widget = None
         self._add_widget(ChatMessageWidget("user", text))
 
     def append_assistant_message(self, text: str) -> None:
         self._streaming_widget = None
         self._tool_group = None
+        self._help_widget = None
         self._add_widget(ChatMessageWidget("assistant", text))
 
     def append_tool_message(self, tool_name: str, result: str) -> None:
@@ -371,6 +377,14 @@ class ChatPanel(QWidget):
     def append_error(self, text: str) -> None:
         self._add_widget(ChatMessageWidget("error", text))
 
+    def append_help_request(self, payload: dict) -> None:
+        self._streaming_widget = None
+        self._tool_group = None
+        self._help_widget = HelpRequestWidget(payload)
+        self._help_widget.continue_clicked.connect(self.continue_requested.emit)
+        self._add_widget(self._help_widget)
+        self.set_waiting(True, payload)
+
     def update_streaming_message(self, delta: str) -> None:
         if self._streaming_widget is None:
             self._streaming_widget = ChatMessageWidget("assistant", "")
@@ -384,12 +398,28 @@ class ChatPanel(QWidget):
     def set_busy(self, busy: bool) -> None:
         self._input.set_busy(busy)
         if busy:
+            self._waiting_for_user = False
             self._show_typing_indicator()
             self._status_dot.setStyleSheet(label_style(ACCENT_PRIMARY, 18))
             self._status_text.setText("Thinking...")
             self._status_text.setStyleSheet(label_style(ACCENT_PRIMARY, FONT_SM))
         else:
             self._remove_typing_indicator()
+            if not self._waiting_for_user:
+                self._status_dot.setStyleSheet(label_style(DARK_TEXT_MUTED, 18))
+                self._status_text.setText("Ready")
+                self._status_text.setStyleSheet(label_style(DARK_TEXT_MUTED, FONT_SM))
+
+    def set_waiting(self, waiting: bool, payload: dict | None = None) -> None:
+        self._waiting_for_user = waiting
+        if waiting:
+            self._remove_typing_indicator()
+            self._input.set_busy(False)
+            self._status_dot.setStyleSheet(label_style(WARNING, 18))
+            blocker = (payload or {}).get("blocker_type", "Waiting").replace("_", " ").title()
+            self._status_text.setText(f"Waiting: {blocker}")
+            self._status_text.setStyleSheet(label_style(WARNING, FONT_SM))
+        else:
             self._status_dot.setStyleSheet(label_style(DARK_TEXT_MUTED, 18))
             self._status_text.setText("Ready")
             self._status_text.setStyleSheet(label_style(DARK_TEXT_MUTED, FONT_SM))
@@ -401,3 +431,5 @@ class ChatPanel(QWidget):
                 item.widget().deleteLater()
         self._streaming_widget = None
         self._tool_group = None
+        self._help_widget = None
+        self._waiting_for_user = False

@@ -9,6 +9,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from browser_agent.agent.collaboration import CollaborationManager
+    from browser_agent.agent.guardrails import Guardrails
     from browser_agent.browser.engine import BrowserEngine
     from browser_agent.browser.page_controller import PageController
     from browser_agent.browser.screenshot import ScreenshotCapture
@@ -33,12 +35,13 @@ STANDARD_TOOLS = CORE_TOOLS | {
     "click_element", "type_text", "extract_text", "go_back",
     "wait_for_element", "find_element_by_text", "diff_snapshot",
     "remember", "recall", "get_page_elements",
+    "request_user_help", "confirm_action", "wait_for_user_resume", "mark_blocked",
 }
 
 ADVANCED_TOOLS = STANDARD_TOOLS | {
     "smart_click", "smart_type", "click_by_description",
     "click_at_coordinates", "understand_page", "autofill_form",
-    "get_my_profile", "save_profile_field", "upload_file",
+    "get_my_profile", "save_profile_field", "check_profile_fields", "upload_file",
     "click_shadow_element", "list_iframes", "check_for_captcha",
     "wait_for_network_idle", "wait_for_url_match",
     "diff_screenshot", "go_forward",
@@ -89,25 +92,120 @@ def create_browser_tools(
     vision_detector=None,
     error_recovery=None,
     multi_agent: "MultiAgentCoordinator | None" = None,
+    guardrails: "Guardrails | None" = None,
+    collaboration_manager: "CollaborationManager | None" = None,
 ) -> list[Callable]:
     """Create tool functions with browser components bound via closure."""
 
+    def _is_affirmative(response: str) -> bool:
+        normalized = response.strip().lower()
+        return normalized in {"y", "yes", "ok", "okay", "continue", "confirmed", "approve", "approved", "done"}
+
+    async def _request_user_help(
+        blocker_type: str,
+        reason: str,
+        instructions: str,
+        *,
+        expected_response_type: str = "text",
+        continue_label: str = "Continue",
+        allow_continue: bool | None = None,
+        metadata: dict | None = None,
+    ) -> str:
+        if not collaboration_manager:
+            return "continue"
+        return await collaboration_manager.request_help(
+            blocker_type,
+            reason,
+            instructions,
+            expected_response_type=expected_response_type,
+            continue_label=continue_label,
+            allow_continue=allow_continue,
+            metadata=metadata,
+        )
+
+    async def _confirm_action(tool_name: str, args: dict, action_summary: str) -> bool:
+        if not guardrails:
+            return True
+        decision = guardrails.check(tool_name, args)
+        if not decision:
+            return True
+        response = await _request_user_help(
+            decision.blocker_type,
+            decision.message,
+            f"Confirm this action to continue: {action_summary}",
+            expected_response_type="confirmation",
+            continue_label="Continue",
+            allow_continue=True,
+            metadata={
+                "severity": decision.severity,
+                "tool_name": tool_name,
+                "keyword": decision.keyword,
+                "args": args,
+            },
+        )
+        return _is_affirmative(response)
+
+    async def _wait_on_page_challenge(default_reason: str) -> str | None:
+        auth_state = await page_controller.inspect_auth_state()
+        blocker_type = auth_state.get("blocker_type", "")
+        if not blocker_type:
+            return None
+
+        signals = ", ".join(auth_state.get("signals", [])) or "page challenge"
+        if blocker_type == "captcha_required":
+            instructions = "Solve the CAPTCHA in the browser, then press Continue or reply 'done'."
+        elif blocker_type == "two_factor_required":
+            instructions = "Complete the OTP / verification step in the browser, then press Continue or reply 'done'."
+        else:
+            instructions = "Log in manually in the browser, then press Continue or reply 'done'."
+
+        await _request_user_help(
+            blocker_type,
+            f"{default_reason} I found a blocker on the page: {signals}.",
+            instructions,
+            expected_response_type="manual",
+            continue_label="Continue",
+            allow_continue=True,
+            metadata=auth_state,
+        )
+        return blocker_type
+
     async def navigate_to(url: str) -> str:
         """Navigate the browser to a URL."""
+        if collaboration_manager:
+            collaboration_manager.note_subgoal(f"Navigate to {url}")
         await page_controller.navigate(url)
         info = await page_controller.get_page_info()
+        if collaboration_manager:
+            collaboration_manager.note_action(f"Navigated to {url}")
         return f"Navigated to {url}. Page title: {info.get('title', 'unknown')}"
 
     async def click_element(selector: str) -> str:
         """Click an element on the page by CSS selector. Shows animated cursor moving to the element."""
+        if not await _confirm_action("click_element", {"selector": selector}, f"click '{selector}'"):
+            return "Cancelled: user did not confirm the action."
         result = await page_controller.click(selector)
+        if "failed" in result.lower():
+            blocker = await _wait_on_page_challenge(f"I couldn't click '{selector}'.")
+            if blocker:
+                result = await page_controller.click(selector)
         await asyncio.sleep(0.5)  # Let user see the click effect
+        if "failed" not in result.lower() and collaboration_manager:
+            collaboration_manager.note_action(f"Clicked {selector}")
         return result
 
     async def type_text(selector: str, text: str) -> str:
         """Type text into an input field with visible character-by-character animation."""
+        if collaboration_manager:
+            collaboration_manager.note_subgoal(f"Fill {selector}")
         result = await page_controller.type_text(selector, text)
+        if "failed" in result.lower():
+            blocker = await _wait_on_page_challenge(f"I couldn't type into '{selector}'.")
+            if blocker:
+                result = await page_controller.type_text(selector, text)
         await asyncio.sleep(0.3)
+        if "failed" not in result.lower() and collaboration_manager:
+            collaboration_manager.note_action(f"Filled {selector}")
         return result
 
     async def scroll_page(direction: str = "down", pixels: int = 500) -> str:
@@ -117,7 +215,11 @@ def create_browser_tools(
 
     async def press_key(key: str) -> str:
         """Press a keyboard key with visual label. Common keys: Enter, Tab, Escape, Backspace, ArrowDown."""
+        if not await _confirm_action("press_key", {"key": key}, f"press the {key} key"):
+            return "Cancelled: user did not confirm the action."
         result = await page_controller.press_key(key)
+        if collaboration_manager and "failed" not in result.lower():
+            collaboration_manager.note_action(f"Pressed key {key}")
         return result
 
     async def extract_text(selector: str = "body") -> str:
@@ -273,13 +375,26 @@ def create_browser_tools(
         result = await page_controller.detect_captcha()
         if result.get("detected"):
             signals = ", ".join(result.get("signals", []))
-            return f"CAPTCHA/2FA detected: {signals}. Please solve it manually, then tell me to continue."
+            await _request_user_help(
+                result.get("blockerType") or "captcha_required",
+                f"Page challenge detected: {signals}.",
+                "Solve the challenge in the browser, then press Continue or reply 'done'.",
+                expected_response_type="manual",
+                continue_label="Continue",
+                allow_continue=True,
+                metadata=result,
+            )
+            return f"CAPTCHA/2FA detected: {signals}. The task is paused for the user to complete it."
         return "No CAPTCHA or 2FA detected on this page."
 
     async def click_shadow_element(selector: str) -> str:
         """Click an element that might be inside a Shadow DOM. Uses deep traversal to find elements inside shadow roots."""
+        if not await _confirm_action("click_shadow_element", {"selector": selector}, f"click shadow element '{selector}'"):
+            return "Cancelled: user did not confirm the action."
         result = await page_controller.click_shadow(selector)
         await asyncio.sleep(0.5)
+        if "failed" not in result.lower() and collaboration_manager:
+            collaboration_manager.note_action(f"Clicked shadow element {selector}")
         return result
 
     async def list_iframes() -> str:
@@ -297,7 +412,15 @@ def create_browser_tools(
             return "User profile not available."
         filled = user_profile.get_filled()
         if not filled:
-            return "No profile info saved yet. Ask the user for their details."
+            await _request_user_help(
+                "missing_profile_data",
+                "I don't have saved profile data to fill this form.",
+                "Reply with the missing details in chat or save profile fields before continuing.",
+                expected_response_type="text",
+                continue_label="Continue",
+                allow_continue=False,
+            )
+            return "No profile info saved yet. Waiting for user details."
         lines = ["User's profile:"]
         for f in filled:
             lines.append(f"- {f.label}: {f.value}")
@@ -308,12 +431,48 @@ def create_browser_tools(
         if not user_profile:
             return "User profile not available."
         user_profile.set(field_name, value, field_name.replace("_", " ").title())
+        if collaboration_manager:
+            collaboration_manager.note_action(f"Saved profile field {field_name}")
         return f"Saved profile: {field_name} = {value}"
+
+    async def check_profile_fields(field_names: str) -> str:
+        """Check whether required profile fields are available. Provide a comma-separated list or JSON array of keys, e.g. 'full_name,email,resume_path'."""
+        if not user_profile:
+            return "User profile not available."
+
+        import json as _json
+
+        try:
+            parsed = _json.loads(field_names)
+            if isinstance(parsed, list):
+                keys = [str(item).strip() for item in parsed]
+            else:
+                keys = [part.strip() for part in field_names.split(",")]
+        except _json.JSONDecodeError:
+            keys = [part.strip() for part in field_names.split(",")]
+
+        keys = [key for key in keys if key]
+        missing = user_profile.missing_fields(keys)
+        if not missing:
+            return f"All required profile fields are available: {', '.join(keys)}"
+
+        await _request_user_help(
+            "missing_profile_data",
+            f"Missing profile fields: {', '.join(missing)}.",
+            f"Reply with values for these fields or save them first: {', '.join(missing)}.",
+            expected_response_type="text",
+            continue_label="Continue",
+            allow_continue=False,
+            metadata={"missing_fields": missing},
+        )
+        return f"Missing profile fields: {', '.join(missing)}"
 
     # -- Phase 4: Intelligence & Perception tools --
 
     async def click_by_description(visual_description: str) -> str:
         """Click an element by describing what it looks like visually — no CSS selector needed. Examples: 'the blue Apply button', 'the search box at the top', 'the first job listing link'. This annotates the page with numbered labels, takes a screenshot, then clicks the best match."""
+        if not await _confirm_action("click_by_description", {"visual_description": visual_description}, f"click the element described as '{visual_description}'"):
+            return "Cancelled: user did not confirm the action."
         if not vision_detector:
             return "Vision system not available."
 
@@ -371,29 +530,51 @@ def create_browser_tools(
         # Step 4: Click the matched element
         x, y = best_match["x"], best_match["y"]
         result = await vision_detector.click_at(x, y)
+        if collaboration_manager and "failed" not in result.lower():
+            collaboration_manager.note_action(f"Clicked described element {visual_description}")
         return f"[vision] Matched element [{best_match['index']}] <{best_match['tag']}> '{best_match['text']}' — {result}"
 
     async def click_at_coordinates(x: int, y: int) -> str:
         """Click at specific pixel coordinates on the page. Use this when CSS selectors fail and you know where the element is visually."""
+        if not await _confirm_action("click_at_coordinates", {"x": x, "y": y}, f"click page coordinates ({x}, {y})"):
+            return "Cancelled: user did not confirm the action."
         if not vision_detector:
             return "Vision system not available."
         result = await vision_detector.click_at(x, y)
         await asyncio.sleep(0.5)
+        if collaboration_manager and "failed" not in result.lower():
+            collaboration_manager.note_action(f"Clicked coordinates ({x}, {y})")
         return result
 
     async def smart_click(selector: str) -> str:
         """Click an element with automatic fallback recovery. Tries: CSS selector → wait+retry → find by text → find by aria-label → scroll+retry. Use this instead of click_element when you're unsure if the selector will work."""
+        if not await _confirm_action("smart_click", {"selector": selector}, f"click '{selector}'"):
+            return "Cancelled: user did not confirm the action."
         if not error_recovery:
-            return await page_controller.click(selector)
-        result = await error_recovery.smart_click(selector)
+            result = await page_controller.click(selector)
+        else:
+            result = await error_recovery.smart_click(selector)
+        if "failed" in result.lower():
+            blocker = await _wait_on_page_challenge(f"I couldn't click '{selector}'.")
+            if blocker:
+                result = await (error_recovery.smart_click(selector) if error_recovery else page_controller.click(selector))
         await asyncio.sleep(0.3)
+        if "failed" not in result.lower() and collaboration_manager:
+            collaboration_manager.note_action(f"Smart clicked {selector}")
         return result
 
     async def smart_type(selector: str, text: str) -> str:
         """Type text with automatic fallback recovery. Tries: CSS selector → wait+retry → find by aria/placeholder. Use this instead of type_text when you're unsure if the selector will work."""
         if not error_recovery:
-            return await page_controller.type_text(selector, text)
-        result = await error_recovery.smart_type(selector, text)
+            result = await page_controller.type_text(selector, text)
+        else:
+            result = await error_recovery.smart_type(selector, text)
+        if "failed" in result.lower():
+            blocker = await _wait_on_page_challenge(f"I couldn't type into '{selector}'.")
+            if blocker:
+                result = await (error_recovery.smart_type(selector, text) if error_recovery else page_controller.type_text(selector, text))
+        if "failed" not in result.lower() and collaboration_manager:
+            collaboration_manager.note_action(f"Smart typed into {selector}")
         return result
 
     async def find_element_by_text(visible_text: str) -> str:
@@ -455,6 +636,7 @@ def create_browser_tools(
         autofill_form,
         get_my_profile,
         save_profile_field,
+        check_profile_fields,
         # Phase 4
         click_by_description,
         click_at_coordinates,
@@ -468,6 +650,8 @@ def create_browser_tools(
 
     async def click_text(text: str) -> str:
         """Click any element by its visible text. Examples: click_text('Dark'), click_text('Submit'), click_text('Sign in'). Finds the SMALLEST, most specific element matching the text and clicks it. Works with buttons, links, radio buttons, tabs, labels, toggles."""
+        if not await _confirm_action("click_text", {"text": text}, f"click '{text}'"):
+            return "Cancelled: user did not confirm the action."
         import json as _j
         script = f"""
         (function() {{
@@ -555,13 +739,28 @@ def create_browser_tools(
             role = result.get('role', '')
             tag = result.get('tag', '')
             desc = f"[{role or tag}]" if role else f"[{tag}]"
+            if collaboration_manager:
+                collaboration_manager.note_action(f"Clicked text {text}")
             return f"Clicked {desc} \"{result.get('text', '')[:40]}\""
+        blocker = await _wait_on_page_challenge(f"I couldn't find or click '{text}'.")
+        if blocker:
+            retry = await page_controller._run_js_json(script)
+            if retry.get("success"):
+                await asyncio.sleep(0.5)
+                role = retry.get('role', '')
+                tag = retry.get('tag', '')
+                desc = f"[{role or tag}]" if role else f"[{tag}]"
+                if collaboration_manager:
+                    collaboration_manager.note_action(f"Clicked text {text}")
+                return f"Clicked {desc} \"{retry.get('text', '')[:40]}\""
         return f"Could not find '{text}'. Try take_screenshot() to see the page, or snapshot() to list elements."
 
     # -- Completion signal --
 
     async def done(summary: str) -> str:
         """Call this when the task is COMPLETE. Provide a brief summary of what was accomplished. This stops the agent loop."""
+        if collaboration_manager:
+            collaboration_manager.complete(summary)
         return f"TASK_COMPLETE: {summary}"
 
     tools.append(done)
@@ -580,17 +779,27 @@ def create_browser_tools(
         text, refs = await page_controller.take_snapshot()
         _last_snapshot["text"] = text
         _last_snapshot["refs"] = refs
+        if collaboration_manager:
+            collaboration_manager.note_snapshot(text, refs)
         if not text:
             return "No accessibility tree could be captured."
         return f"Snapshot ({len(refs)} interactive elements):\n{text}"
 
     async def click_ref(ref: str) -> str:
         """Click an element by its @ref from the last snapshot (e.g. 'e3'). Always take a snapshot() first to get valid refs."""
+        if not await _confirm_action("click_element", {"selector": ref}, f"click @{ref} from the last snapshot"):
+            return "Cancelled: user did not confirm the action."
         refs = _last_snapshot.get("refs", {})
         if not refs:
             return "No snapshot available. Call snapshot() first."
         result = await page_controller.click_ref(ref, refs)
+        if "failed" in result.lower():
+            blocker = await _wait_on_page_challenge(f"I couldn't click @{ref}.")
+            if blocker:
+                result = await page_controller.click_ref(ref, refs)
         await asyncio.sleep(0.5)
+        if "failed" not in result.lower() and collaboration_manager:
+            collaboration_manager.note_action(f"Clicked @{ref}")
         return result
 
     async def fill_ref(ref: str, text: str) -> str:
@@ -607,6 +816,12 @@ def create_browser_tools(
 
         # Try standard fill first
         result = await page_controller.type_text(selector, text)
+        if "failed" in result.lower():
+            blocker = await _wait_on_page_challenge(f"I couldn't fill @{ref}.")
+            if blocker:
+                await page_controller.click(selector)
+                await asyncio.sleep(0.3)
+                result = await page_controller.type_text(selector, text)
 
         # If standard fill didn't work (contenteditable), use execCommand
         if "failed" in result.lower():
@@ -622,10 +837,64 @@ def create_browser_tools(
             """
             r = await page_controller.run_js(js)
             if r == "ok":
+                if collaboration_manager:
+                    collaboration_manager.note_action(f"Filled @{ref}")
                 return f"Filled @{ref} (contenteditable): typed '{text[:50]}'"
             return f"Fill @{ref} failed: {r}"
 
+        if collaboration_manager:
+            collaboration_manager.note_action(f"Filled @{ref}")
         return f"Filled @{ref}: {result}"
+
+    async def request_user_help(reason: str, instructions: str, expected_response_type: str = "text") -> str:
+        """Pause the task and ask the user for help. Use this for ambiguous targets, missing info, login, CAPTCHA, or manual steps."""
+        response = await _request_user_help(
+            "manual_user_help",
+            reason,
+            instructions,
+            expected_response_type=expected_response_type,
+            continue_label="Continue",
+            allow_continue=expected_response_type in {"manual", "confirmation", "acknowledge"},
+        )
+        return f"User response: {response}"
+
+    async def confirm_action(action_summary: str) -> str:
+        """Ask the user to confirm a sensitive action before continuing."""
+        response = await _request_user_help(
+            "confirmation_required",
+            f"Confirmation required: {action_summary}",
+            "Confirm this action to continue. Reply yes/no or use the Continue button.",
+            expected_response_type="confirmation",
+            continue_label="Continue",
+            allow_continue=True,
+            metadata={"action_summary": action_summary},
+        )
+        return "Confirmed by user." if _is_affirmative(response) else "User did not confirm the action."
+
+    async def wait_for_user_resume(instructions: str = "Complete the manual step, then continue.") -> str:
+        """Pause until the user completes a manual step in the browser and tells the agent to continue."""
+        response = await _request_user_help(
+            "manual_step_required",
+            "Waiting for user action in the browser.",
+            instructions,
+            expected_response_type="manual",
+            continue_label="Continue",
+            allow_continue=True,
+        )
+        return f"User resumed the task: {response}"
+
+    async def mark_blocked(blocker_type: str, details: str) -> str:
+        """Mark the task as blocked and ask the user for the next input needed to continue."""
+        response = await _request_user_help(
+            blocker_type,
+            f"Task blocked: {blocker_type}",
+            details,
+            expected_response_type="text",
+            continue_label="Continue",
+            allow_continue=False,
+            metadata={"blocker_type": blocker_type},
+        )
+        return f"User response: {response}"
 
     async def diff_snapshot() -> str:
         """Compare the current page state against the last snapshot. Shows what changed (elements added/removed/modified). Useful to verify if an action worked."""
@@ -684,6 +953,10 @@ def create_browser_tools(
         snapshot,
         click_ref,
         fill_ref,
+        request_user_help,
+        confirm_action,
+        wait_for_user_resume,
+        mark_blocked,
         diff_snapshot,
         diff_screenshot,
         wait_for_network_idle,

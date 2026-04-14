@@ -6,6 +6,7 @@ Per-task: classifies complexity, builds a filtered tool graph, sends smart conte
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import uuid
 from typing import TYPE_CHECKING
@@ -14,6 +15,7 @@ from PyQt6.QtCore import QObject
 
 from agentflow.core.state import Message
 
+from browser_agent.agent.collaboration import CollaborationManager
 from browser_agent.agent.graph import build_agent_graph, reset_step_history
 from browser_agent.agent.tools import STEP_BUDGETS, classify_task_complexity
 from browser_agent.bridge.signals import AgentSignals
@@ -63,6 +65,10 @@ class AgentController(QObject):
         self._pattern_tracker = pattern_tracker
         self._guardrails = guardrails
         self._recorder = session_recorder
+        self._collaboration = CollaborationManager(
+            on_help_requested=self._on_help_requested,
+            on_status_changed=self._on_task_status_changed,
+        )
 
         # Store components for per-task graph building
         self._graph_components = {
@@ -77,6 +83,8 @@ class AgentController(QObject):
             "vision_detector": vision_detector,
             "error_recovery": error_recovery,
             "multi_agent": multi_agent,
+            "guardrails": guardrails,
+            "collaboration_manager": self._collaboration,
         }
 
         self._thread_id = str(uuid.uuid4())
@@ -91,19 +99,39 @@ class AgentController(QObject):
     def thread_id(self) -> str:
         return self._thread_id
 
+    @property
+    def task_session(self):
+        return self._collaboration.session
+
+    @property
+    def is_waiting_for_user(self) -> bool:
+        return self._collaboration.is_waiting
+
     async def handle_user_message(self, text: str) -> None:
         if self._current_task and not self._current_task.done():
+            if self._collaboration.is_waiting:
+                self._record_user_message(text)
+                self.signals.agent_busy.emit(True)
+                self.signals.task_status_changed.emit("resuming", "User provided input")
+                self._collaboration.resume(text)
+                return
             self.signals.error_occurred.emit("Agent is still processing. Please wait.")
             return
         self._current_task = asyncio.create_task(self._run(text))
 
-    async def _run(self, text: str) -> None:
+    def continue_waiting_task(self, response: str = "continue") -> None:
+        if not self._collaboration.is_waiting:
+            return
+        if response:
+            self._record_user_message(response)
         self.signals.agent_busy.emit(True)
+        self.signals.task_status_changed.emit("resuming", "User chose to continue")
+        self._collaboration.resume(response or "continue")
 
-        if self._conv_db:
-            self._conv_db.add_message(self._thread_id, "user", text)
-        if self._recorder and self._recorder.is_recording:
-            self._recorder.record_user_message(text)
+    async def _run(self, text: str) -> None:
+        self._collaboration.start_task(text)
+        self.signals.agent_busy.emit(True)
+        self._record_user_message(text)
 
         try:
             # ── Classify task and set budget ──
@@ -176,16 +204,15 @@ class AgentController(QObject):
                                 fn = tc.get("function", {})
                                 tool_name = fn.get("name", "unknown")
                                 tool_args_str = fn.get("arguments", "{}")
+                                try:
+                                    tool_args = json.loads(tool_args_str) if isinstance(tool_args_str, str) else tool_args_str
+                                except json.JSONDecodeError:
+                                    tool_args = {}
 
-                                if self._guardrails:
-                                    import json as _json
-                                    try:
-                                        tool_args = _json.loads(tool_args_str) if isinstance(tool_args_str, str) else tool_args_str
-                                    except _json.JSONDecodeError:
-                                        tool_args = {}
-                                    warning = self._guardrails.check(tool_name, tool_args)
-                                    if warning:
-                                        self.signals.error_occurred.emit(warning)
+                                if tool_name == "done":
+                                    summary = tool_args.get("summary", "Task completed.")
+                                    self._collaboration.complete(summary)
+                                    assistant_msgs.append(summary)
 
                                 self.signals.tool_call_started.emit(tool_name, tool_args_str)
                                 if self._recorder and self._recorder.is_recording:
@@ -219,14 +246,19 @@ class AgentController(QObject):
                                 title = final_msg[:50].split("\n")[0]
                                 self._conv_db.update_thread_title(self._thread_id, title)
                                 break
+                    if not self._collaboration.is_waiting:
+                        self._collaboration.complete(final_msg)
 
         except asyncio.CancelledError:
+            self._collaboration.fail("Agent stopped by user.")
             self.signals.error_occurred.emit("Agent stopped by user.")
         except Exception as e:
             logger.exception("Agent error")
+            self._collaboration.fail(str(e))
             self.signals.error_occurred.emit(str(e))
         finally:
             self.signals.agent_busy.emit(False)
+            self._current_task = None
 
     def switch_thread(self, thread_id: str) -> list:
         self._thread_id = thread_id
@@ -245,3 +277,26 @@ class AgentController(QObject):
     def stop(self) -> None:
         if self._current_task and not self._current_task.done():
             self._current_task.cancel()
+
+    def _record_user_message(self, text: str) -> None:
+        if self._conv_db:
+            self._conv_db.add_message(self._thread_id, "user", text)
+        if self._recorder and self._recorder.is_recording:
+            self._recorder.record_user_message(text)
+
+    def _on_help_requested(self, request, session) -> None:
+        payload = request.to_payload()
+        if self._conv_db:
+            self._conv_db.add_message(
+                self._thread_id,
+                "assistant",
+                request.reason,
+                detail=request.instructions,
+                metadata={"kind": "help_request", **payload},
+            )
+        self.signals.help_requested.emit(payload)
+        self.signals.agent_busy.emit(False)
+
+    def _on_task_status_changed(self, status: str, session) -> None:
+        detail = session.pending_blocker.reason if session.pending_blocker else session.result_summary
+        self.signals.task_status_changed.emit(status, detail)

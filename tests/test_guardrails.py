@@ -15,16 +15,18 @@ class TestGuardrailsCritical:
     def test_detects_payment_keyword(self, guardrails):
         result = guardrails.check("click_element", {"selector": "confirm payment"})
         assert result is not None
-        assert "CRITICAL" in result
+        assert result.severity == "critical"
+        assert result.blocker_type == "confirmation_required"
 
     def test_detects_delete_account(self, guardrails):
         result = guardrails.check("smart_click", {"selector": "delete account"})
         assert result is not None
-        assert "CRITICAL" in result
+        assert result.severity == "critical"
 
     def test_detects_case_insensitive(self, guardrails):
         result = guardrails.check("click_element", {"selector": "CONFIRM PAYMENT"})
         assert result is not None
+        assert result.keyword == "confirm payment"
 
     def test_safe_action_passes(self, guardrails):
         result = guardrails.check("click_element", {"selector": "#next-button"})
@@ -38,6 +40,7 @@ class TestGuardrailsWarning:
         g = Guardrails(sensitivity="medium")
         result = g.check("click_element", {"selector": "submit"})
         assert result is not None
+        assert result.severity == "warning"
 
     def test_low_ignores_submit(self):
         g = Guardrails(sensitivity="low")
@@ -57,6 +60,7 @@ class TestGuardrailsHigh:
         g = Guardrails(sensitivity="high")
         result = g.check("click_element", {"selector": "#harmless-button"})
         assert result is not None
+        assert result.severity == "info"
 
     def test_ignores_unmonitored_tool(self):
         g = Guardrails(sensitivity="high")
