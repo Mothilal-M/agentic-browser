@@ -26,6 +26,7 @@ if TYPE_CHECKING:
 CORE_TOOLS = {
     "navigate_to", "snapshot", "click_ref", "fill_ref",
     "press_key", "scroll_page", "take_screenshot", "done",
+    "click_text",  # click any element by its visible text
 }
 
 STANDARD_TOOLS = CORE_TOOLS | {
@@ -463,6 +464,100 @@ def create_browser_tools(
         understand_page,
     ]
 
+    # -- Quick action: click by visible text (no snapshot needed) --
+
+    async def click_text(text: str) -> str:
+        """Click any element by its visible text. Examples: click_text('Dark'), click_text('Submit'), click_text('Sign in'). Finds the SMALLEST, most specific element matching the text and clicks it. Works with buttons, links, radio buttons, tabs, labels, toggles."""
+        import json as _j
+        script = f"""
+        (function() {{
+            const search = {_j.dumps(text)}.toLowerCase().trim();
+            const sel = 'a, button, input, label, span, option, [role="radio"], [role="button"], [role="tab"], [role="option"], [role="menuitem"], [role="switch"], [role="checkbox"]';
+            const allEls = document.querySelectorAll(sel);
+            let best = null;
+            let bestScore = -1;
+            let bestSize = Infinity;
+
+            for (const el of allEls) {{
+                const rect = el.getBoundingClientRect();
+                if (rect.width === 0 || rect.height === 0) continue;
+                if (rect.bottom < 0 || rect.top > window.innerHeight) continue;
+
+                const t = (el.textContent || '').trim().toLowerCase();
+                const aria = (el.getAttribute('aria-label') || '').toLowerCase();
+                const val = (el.value || '').toLowerCase();
+                const title = (el.title || '').toLowerCase();
+
+                let score = 0;
+                // Exact match gets highest score
+                if (t === search || aria === search || val === search) score = 100;
+                // Starts with search text
+                else if (t.startsWith(search) || aria.startsWith(search)) score = 50;
+                // Contains search text
+                else if (t.includes(search) || aria.includes(search) || title.includes(search)) score = 25;
+                else continue;
+
+                // Prefer smaller elements (more specific)
+                const size = rect.width * rect.height;
+                // Prefer interactive elements
+                const tag = el.tagName;
+                if (tag === 'BUTTON' || tag === 'A' || tag === 'INPUT') score += 10;
+                if (el.getAttribute('role')) score += 5;
+
+                if (score > bestScore || (score === bestScore && size < bestSize)) {{
+                    best = el;
+                    bestScore = score;
+                    bestSize = size;
+                }}
+            }}
+
+            if (!best) return JSON.stringify({{success:false, error:'No element found with text: ' + search}});
+
+            best.scrollIntoView({{behavior:'smooth', block:'center'}});
+
+            // Visual feedback
+            if (window.__ai) {{
+                const r = best.getBoundingClientRect();
+                window.__ai.highlightElement(best);
+                window.__ai.moveCursorTo(r.left + r.width/2, r.top + r.height/2, 400);
+            }}
+
+            // Click + dispatch events for radios/checkboxes
+            best.focus();
+            best.click();
+            ['pointerdown','mousedown','pointerup','mouseup','click'].forEach(type => {{
+                best.dispatchEvent(new PointerEvent(type, {{bubbles:true, cancelable:true, view:window}}));
+            }});
+            if (best.type === 'radio' || best.type === 'checkbox') {{
+                best.checked = !best.checked;
+                best.dispatchEvent(new Event('change', {{bubbles:true}}));
+            }}
+
+            // If it's a label, also click the associated input
+            if (best.tagName === 'LABEL' && best.htmlFor) {{
+                const input = document.getElementById(best.htmlFor);
+                if (input) {{ input.click(); input.dispatchEvent(new Event('change', {{bubbles:true}})); }}
+            }}
+
+            setTimeout(() => {{ if (window.__ai) window.__ai.hideHighlight(); }}, 500);
+
+            return JSON.stringify({{
+                success: true,
+                tag: best.tagName.toLowerCase(),
+                role: best.getAttribute('role') || '',
+                text: (best.textContent || '').trim().substring(0, 60)
+            }});
+        }})()
+        """
+        result = await page_controller._run_js_json(script)
+        if result.get("success"):
+            await asyncio.sleep(0.5)
+            role = result.get('role', '')
+            tag = result.get('tag', '')
+            desc = f"[{role or tag}]" if role else f"[{tag}]"
+            return f"Clicked {desc} \"{result.get('text', '')[:40]}\""
+        return f"Could not find '{text}'. Try take_screenshot() to see the page, or snapshot() to list elements."
+
     # -- Completion signal --
 
     async def done(summary: str) -> str:
@@ -470,6 +565,7 @@ def create_browser_tools(
         return f"TASK_COMPLETE: {summary}"
 
     tools.append(done)
+    tools.append(click_text)
 
     # -- Agent-browser inspired tools --
 
