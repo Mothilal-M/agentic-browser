@@ -81,7 +81,7 @@ class AppConfig(BaseSettings):
     window_height: int = 900
 
     # Agent
-    recursion_limit: int = 100
+    recursion_limit: int = 25
     reasoning_effort: str = "medium"
 
     # Security

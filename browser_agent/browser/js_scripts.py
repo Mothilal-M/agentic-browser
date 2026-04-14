@@ -644,6 +644,7 @@ ACCESSIBILITY_SNAPSHOT = """
         const visible = rect.width > 0 && rect.height > 0 && rect.bottom > 0 && rect.top < window.innerHeight;
 
         const isInteractive = INTERACTIVE.has(tag) || el.getAttribute('role') === 'button'
+            || el.getAttribute('role') === 'textbox' || el.isContentEditable
             || el.onclick || el.getAttribute('tabindex');
         const text = (el.getAttribute('aria-label') || el.title || el.placeholder
             || el.alt || el.value || '').trim();
@@ -683,6 +684,7 @@ ACCESSIBILITY_SNAPSHOT = """
             }
             if (tag.match(/^H[1-6]$/)) line += ' level=' + tag[1];
             if (el.href) line += ' href="' + el.href.substring(0, 60) + '"';
+            if (el.isContentEditable) line += ' [contenteditable]';
             if (el.disabled) line += ' [disabled]';
             if (el.checked) line += ' [checked]';
             if (label) line += ' "' + label.substring(0, 60) + '"';

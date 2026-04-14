@@ -7,7 +7,6 @@ from dotenv import load_dotenv
 from qasync import asyncSlot
 
 from browser_agent.agent.error_recovery import ErrorRecovery
-from browser_agent.agent.graph import build_agent_graph
 from browser_agent.agent.guardrails import Guardrails
 from browser_agent.agent.vision import VisionDetector
 from browser_agent.recording.exporter import export_html, export_json
@@ -87,19 +86,23 @@ def main() -> int:
     # Multi-agent coordinator (created early, controller set after)
     multi_agent = MultiAgentCoordinator()
 
-    # Agent layer (with memory + skills + intelligence)
-    compiled_graph = build_agent_graph(
-        config, page_controller, screenshot, engine,
-        memory_db, skill_store, skill_player, profile,
-        vision, recovery, multi_agent,
-    )
-
-    # Bridge layer (with persistence)
+    # Bridge layer — builds graph per-task with filtered tools
     controller = AgentController(
-        compiled_graph, config, screenshot, page_controller, engine,
-        conversation_db=conv_db, memory_db=memory_db, user_profile=profile,
+        config=config,
+        screenshot=screenshot,
+        page_controller=page_controller,
+        browser_engine=engine,
+        conversation_db=conv_db,
+        memory_db=memory_db,
+        user_profile=profile,
         pattern_tracker=pattern_tracker,
-        guardrails=guardrails, session_recorder=recorder,
+        guardrails=guardrails,
+        session_recorder=recorder,
+        vision_detector=vision,
+        error_recovery=recovery,
+        skill_store=skill_store,
+        skill_player=skill_player,
+        multi_agent=multi_agent,
     )
 
     # UI

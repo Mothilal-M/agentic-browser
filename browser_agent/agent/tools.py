@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -16,6 +17,64 @@ if TYPE_CHECKING:
     from browser_agent.skills.store import SkillStore
     from browser_agent.storage.memory_db import MemoryDB
     from browser_agent.storage.user_profile import UserProfile
+
+
+# ═══════════════════════════════════════════════════════════════
+#  TOOL TIERING SYSTEM
+# ═══════════════════════════════════════════════════════════════
+
+CORE_TOOLS = {
+    "navigate_to", "snapshot", "click_ref", "fill_ref",
+    "press_key", "scroll_page", "take_screenshot", "done",
+}
+
+STANDARD_TOOLS = CORE_TOOLS | {
+    "click_element", "type_text", "extract_text", "go_back",
+    "wait_for_element", "find_element_by_text", "diff_snapshot",
+    "remember", "recall", "get_page_elements",
+}
+
+ADVANCED_TOOLS = STANDARD_TOOLS | {
+    "smart_click", "smart_type", "click_by_description",
+    "click_at_coordinates", "understand_page", "autofill_form",
+    "get_my_profile", "save_profile_field", "upload_file",
+    "click_shadow_element", "list_iframes", "check_for_captcha",
+    "wait_for_network_idle", "wait_for_url_match",
+    "diff_screenshot", "go_forward",
+}
+
+# Step budgets per tier
+STEP_BUDGETS = {"simple": 20, "standard": 25, "advanced": 30, "full": 40}
+
+
+def classify_task_complexity(user_message: str) -> str:
+    """Classify task complexity from user message."""
+    msg = user_message.lower()
+
+    full_kw = ["skill", "save workflow", "qa test", "dogfood", "multi-agent", "specialist", "export session"]
+    if any(k in msg for k in full_kw):
+        return "full"
+
+    advanced_kw = ["upload", "captcha", "shadow", "iframe", "autofill", "profile", "session", "import"]
+    if any(k in msg for k in advanced_kw):
+        return "advanced"
+
+    simple_kw = [
+        "send", "click", "type", "open", "go to", "navigate", "search",
+        "log in", "sign in", "fill", "write", "say", "reply", "message",
+    ]
+    if len(msg.split()) <= 20 and any(k in msg for k in simple_kw):
+        return "simple"
+
+    return "standard"
+
+
+def filter_tools_by_tier(all_tools: list, tier: str) -> list:
+    """Return only tools matching the given tier."""
+    if tier == "full":
+        return all_tools
+    allowed = {"simple": CORE_TOOLS, "standard": STANDARD_TOOLS, "advanced": ADVANCED_TOOLS}.get(tier, STANDARD_TOOLS)
+    return [t for t in all_tools if t.__name__ in allowed]
 
 
 def create_browser_tools(
@@ -404,6 +463,14 @@ def create_browser_tools(
         understand_page,
     ]
 
+    # -- Completion signal --
+
+    async def done(summary: str) -> str:
+        """Call this when the task is COMPLETE. Provide a brief summary of what was accomplished. This stops the agent loop."""
+        return f"TASK_COMPLETE: {summary}"
+
+    tools.append(done)
+
     # -- Agent-browser inspired tools --
 
     _last_snapshot = {"text": "", "refs": {}}
@@ -431,12 +498,37 @@ def create_browser_tools(
         return result
 
     async def fill_ref(ref: str, text: str) -> str:
-        """Fill text into an element by its @ref from the last snapshot (e.g. fill_ref('e3', 'hello@email.com')). Always take a snapshot() first."""
+        """Type text into an element by its @ref. Works with inputs, textareas, AND contenteditable divs (Slack, WhatsApp). Always call snapshot() first."""
         refs = _last_snapshot.get("refs", {})
         info = refs.get(ref)
         if not info:
             return f"Ref @{ref} not found. Call snapshot() first."
-        result = await page_controller.type_text(info["selector"], text)
+        selector = info["selector"]
+
+        # First click to focus
+        await page_controller.click(selector)
+        await asyncio.sleep(0.3)
+
+        # Try standard fill first
+        result = await page_controller.type_text(selector, text)
+
+        # If standard fill didn't work (contenteditable), use execCommand
+        if "failed" in result.lower():
+            js = f"""
+            (function() {{
+                const el = document.querySelector({__import__('json').dumps(selector)});
+                if (!el) return 'not found';
+                el.focus();
+                document.execCommand('selectAll', false, null);
+                document.execCommand('insertText', false, {__import__('json').dumps(text)});
+                return 'ok';
+            }})()
+            """
+            r = await page_controller.run_js(js)
+            if r == "ok":
+                return f"Filled @{ref} (contenteditable): typed '{text[:50]}'"
+            return f"Fill @{ref} failed: {r}"
+
         return f"Filled @{ref}: {result}"
 
     async def diff_snapshot() -> str:
