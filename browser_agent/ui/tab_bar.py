@@ -1,8 +1,12 @@
-"""Custom tab bar with animated add button and smooth interactions."""
+"""Custom tab bar with animated add button, favicons, loading indicator, and scroll."""
 
-from PyQt6.QtCore import QRectF, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QBrush, QColor, QPainter, QPen
+from PyQt6.QtCore import QRectF, QSize, Qt, QTimer, pyqtSignal
+from PyQt6.QtGui import QBrush, QColor, QIcon, QPainter, QPen, QPixmap
 from PyQt6.QtWidgets import QPushButton, QTabBar
+
+
+# Simple loading spinner icon generator
+_SPINNER_CHARS = ["\u25dc", "\u25dd", "\u25de", "\u25df"]  # ◜◝◞◟
 
 
 class _AddTabButton(QPushButton):
@@ -69,10 +73,65 @@ class BrowserTabBar(QTabBar):
         self.setExpanding(False)
         self.setElideMode(Qt.TextElideMode.ElideRight)
         self.setDocumentMode(True)
+        self.setUsesScrollButtons(True)
+        self.setIconSize(QSize(16, 16))
 
         self._add_btn = _AddTabButton(self)
         self._add_btn.clicked.connect(self.new_tab_requested.emit)
         self.tabCloseRequested.connect(self.tab_close_requested.emit)
+
+        # Track loading state per tab
+        self._loading_tabs: set[int] = set()
+        self._saved_icons: dict[int, QIcon] = {}
+
+        # Loading spinner animation timer
+        self._spin_tick = 0
+        self._spinner_timer = QTimer(self)
+        self._spinner_timer.timeout.connect(self._animate_loading)
+
+    def set_tab_loading(self, index: int, loading: bool) -> None:
+        """Show or hide a loading indicator for the given tab."""
+        if loading:
+            if index not in self._loading_tabs:
+                self._saved_icons[index] = self.tabIcon(index)
+            self._loading_tabs.add(index)
+            if not self._spinner_timer.isActive():
+                self._spinner_timer.start(150)
+        else:
+            self._loading_tabs.discard(index)
+            # Restore saved icon (or clear if none was saved)
+            saved = self._saved_icons.pop(index, QIcon())
+            if not saved.isNull():
+                self.setTabIcon(index, saved)
+            if not self._loading_tabs:
+                self._spinner_timer.stop()
+
+    def set_tab_favicon(self, index: int, icon: QIcon) -> None:
+        """Set the favicon for a tab. If tab is loading, save for later."""
+        if index in self._loading_tabs:
+            self._saved_icons[index] = icon
+        else:
+            self.setTabIcon(index, icon)
+
+    def _animate_loading(self) -> None:
+        self._spin_tick += 1
+        char = _SPINNER_CHARS[self._spin_tick % 4]
+        # Create a text-based icon for loading tabs
+        pixmap = QPixmap(16, 16)
+        pixmap.fill(QColor(0, 0, 0, 0))
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(QColor(59, 130, 246))
+        font = painter.font()
+        font.setPixelSize(14)
+        font.setBold(True)
+        painter.setFont(font)
+        painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, char)
+        painter.end()
+        loading_icon = QIcon(pixmap)
+        for idx in list(self._loading_tabs):
+            if idx < self.count():
+                self.setTabIcon(idx, loading_icon)
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)

@@ -1,22 +1,33 @@
-"""Animated URL bar with gradient focus border."""
+"""Animated URL bar with gradient focus border, security indicator, and domain highlight."""
 
 from PyQt6.QtCore import QRectF, Qt, QTimer
-from PyQt6.QtGui import QBrush, QColor, QConicalGradient, QPainter, QPainterPath, QPen
-from PyQt6.QtWidgets import QHBoxLayout, QLineEdit, QWidget
+from PyQt6.QtGui import (
+    QBrush,
+    QColor,
+    QConicalGradient,
+    QPainter,
+    QPainterPath,
+    QPen,
+)
+from PyQt6.QtWidgets import QHBoxLayout, QLabel, QLineEdit, QWidget
 
 from browser_agent.ui.styles import (
     ACCENT_PRIMARY,
     DARK_TEXT,
+    DARK_TEXT_MUTED,
     DARK_TEXT_SECONDARY,
     FONT_BASE,
     FONT_FALLBACK,
+    FONT_SM,
     GRADIENT_SPEED_FOCUS,
     GRADIENT_SPEED_IDLE,
     GLOW_FADE_IN,
     GLOW_FADE_OUT,
     INPUT_H,
-    RADIUS_PILL,
+    RADIUS_SM,
+    SPACE_2,
     SPACE_4,
+    SUCCESS,
 )
 
 
@@ -35,20 +46,32 @@ class AnimatedUrlBar(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.setFixedHeight(INPUT_H - 4)
+        self.setFixedHeight(INPUT_H - 6)
 
         self._focused = False
         self._angle = 0.0
         self._glow = 0.0
+        self._is_secure = False
 
+        # Security lock icon
+        self._lock_icon = QLabel("\U0001f512")
+        self._lock_icon.setFixedWidth(20)
+        self._lock_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._lock_icon.setStyleSheet(
+            f"color: {SUCCESS}; font-size: 12px; background: transparent;"
+        )
+        self._lock_icon.setVisible(False)
+
+        # URL input
         self._edit = _InnerLineEdit()
-        self._edit.setPlaceholderText("\U0001f50d  Search or enter URL...")
+        self._edit.setPlaceholderText("Search or enter URL...")
         self._edit.installEventFilter(self)
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(SPACE_4, 0, SPACE_4, 0)
-        layout.setSpacing(0)
-        layout.addWidget(self._edit)
+        layout.setContentsMargins(12, 0, SPACE_4, 0)
+        layout.setSpacing(4)
+        layout.addWidget(self._lock_icon)
+        layout.addWidget(self._edit, 1)
 
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._tick)
@@ -63,6 +86,26 @@ class AnimatedUrlBar(QWidget):
 
     def setText(self, text: str):
         self._edit.setText(text)
+        self._update_security_indicator(text)
+
+    def _update_security_indicator(self, url: str) -> None:
+        """Show/hide lock icon based on URL scheme."""
+        if url.startswith("https://"):
+            self._is_secure = True
+            self._lock_icon.setText("\U0001f512")
+            self._lock_icon.setStyleSheet(
+                f"color: {SUCCESS}; font-size: 12px; background: transparent;"
+            )
+            self._lock_icon.setVisible(True)
+        elif url.startswith("http://"):
+            self._is_secure = False
+            self._lock_icon.setText("\u26a0")
+            self._lock_icon.setStyleSheet(
+                f"color: {DARK_TEXT_MUTED}; font-size: 12px; background: transparent;"
+            )
+            self._lock_icon.setVisible(True)
+        else:
+            self._lock_icon.setVisible(False)
 
     def eventFilter(self, obj, event):
         if obj is self._edit:
@@ -79,8 +122,7 @@ class AnimatedUrlBar(QWidget):
             self._glow = min(self._glow + GLOW_FADE_IN, 1.0)
         else:
             self._angle = (self._angle + GRADIENT_SPEED_IDLE * 1.2) % 360.0
-            # Keep a visible baseline glow even when unfocused
-            self._glow = max(self._glow - GLOW_FADE_OUT * 1.2, 0.3)
+            self._glow = max(self._glow - GLOW_FADE_OUT * 1.2, 0.25)
         self.update()
 
     def paintEvent(self, event):
@@ -92,7 +134,7 @@ class AnimatedUrlBar(QWidget):
         rect = QRectF(m, m, w - 2 * m, h - 2 * m)
         path = QPainterPath()
         path.addRoundedRect(rect, radius, radius)
-        p.fillPath(path, QBrush(QColor(255, 255, 255, 12 if self._focused else 8)))
+        p.fillPath(path, QBrush(QColor(255, 255, 255, 10 if self._focused else 6)))
 
         intensity = self._glow
         if intensity > 0.01:
@@ -102,14 +144,11 @@ class AnimatedUrlBar(QWidget):
                            (0.5, QColor(59, 130, 246)), (0.75, QColor(168, 85, 247)),
                            (1.0, QColor(108, 92, 231))]:
                 cc = QColor(c)
-                cc.setAlphaF(0.25 + 0.75 * intensity)
+                cc.setAlphaF(0.20 + 0.60 * intensity)
                 grad.setColorAt(pos, cc)
-            p.setPen(QPen(QBrush(grad), 1.0 + 0.5 * intensity))
+            p.setPen(QPen(QBrush(grad), 1.0 + 0.4 * intensity))
             p.drawRoundedRect(rect, radius, radius)
-            if intensity > 0.4:
-                p.setPen(QPen(QColor(108, 92, 231, int(12 * intensity)), 1.0))
-                p.drawRoundedRect(QRectF(m - 1, m - 1, w - 2 * (m - 1), h - 2 * (m - 1)), radius + 1, radius + 1)
         else:
-            p.setPen(QPen(QColor(255, 255, 255, 12), 1.0))
+            p.setPen(QPen(QColor(255, 255, 255, 10), 1.0))
             p.drawRoundedRect(rect, radius, radius)
         p.end()

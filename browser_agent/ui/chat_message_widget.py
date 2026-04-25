@@ -2,12 +2,14 @@
 
 from datetime import datetime
 
-from PyQt6.QtCore import QSize, Qt, QTimer, QUrl
-from PyQt6.QtGui import QDesktopServices
+from PyQt6.QtCore import QSize, Qt, QTimer, QUrl, pyqtSignal
+from PyQt6.QtGui import QAction, QClipboard, QDesktopServices
 from PyQt6.QtWidgets import (
+    QApplication,
     QFrame,
     QHBoxLayout,
     QLabel,
+    QMenu,
     QSizePolicy,
     QTextBrowser,
     QVBoxLayout,
@@ -16,12 +18,20 @@ from PyQt6.QtWidgets import (
 
 from browser_agent.ui.markdown_renderer import md_to_html
 from browser_agent.ui.styles import (
+    ACCENT_PRIMARY,
+    DARK_BG,
     DARK_TEXT,
+    DARK_TEXT_MUTED,
     DARK_TEXT_SECONDARY,
+    ERROR,
     FONT_BASE,
     FONT_FALLBACK,
     FONT_SM,
+    FONT_XS,
     GLASS_BORDER,
+    RADIUS_SM,
+    SPACE_1,
+    SPACE_2,
     slide_fade_in,
 )
 
@@ -84,8 +94,37 @@ class _AutoSizeTextBrowser(QTextBrowser):
             self.setFixedHeight(h)
 
 
+class _MessageActionBtn(QLabel):
+    """Tiny icon button shown on message hover."""
+    clicked = pyqtSignal()
+
+    _STYLE = (
+        f"QLabel {{ color: {DARK_TEXT_MUTED}; font-size: 13px;"
+        f" background: transparent; border-radius: {RADIUS_SM}px;"
+        f" padding: 2px 4px; }}"
+        f"QLabel:hover {{ color: {DARK_TEXT}; background: rgba(255,255,255,0.08); }}"
+    )
+
+    def __init__(self, icon: str, tooltip: str, parent=None):
+        super().__init__(icon, parent)
+        self.setToolTip(tooltip)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFixedSize(24, 24)
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setStyleSheet(self._STYLE)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
+        super().mousePressEvent(event)
+
+
 class ChatMessageWidget(QFrame):
     """A single message bubble in the chat panel."""
+
+    # Signals for parent to handle retry/delete
+    retry_requested = pyqtSignal()
+    delete_requested = pyqtSignal()
 
     ROLE_CONFIG = {
         "user": {"label": "You", "role_obj": "role_label_user"},
@@ -107,7 +146,7 @@ class ChatMessageWidget(QFrame):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(4)
 
-        # Header
+        # Header row with role label, action buttons, and timestamp
         header = QHBoxLayout()
         header.setSpacing(6)
         header.setContentsMargins(0, 0, 0, 0)
@@ -117,6 +156,29 @@ class ChatMessageWidget(QFrame):
         role_label.setStyleSheet("font-weight: 600; letter-spacing: 0.5px;")
         header.addWidget(role_label)
         header.addStretch()
+
+        # Action buttons (hidden until hover)
+        self._actions_container = QWidget()
+        self._actions_container.setStyleSheet("background: transparent;")
+        self._actions_container.setVisible(False)
+        actions_layout = QHBoxLayout(self._actions_container)
+        actions_layout.setContentsMargins(0, 0, 0, 0)
+        actions_layout.setSpacing(2)
+
+        self._copy_btn = _MessageActionBtn("\u2398", "Copy text")  # ⎘
+        self._copy_btn.clicked.connect(self._copy_text)
+        actions_layout.addWidget(self._copy_btn)
+
+        if role == "assistant":
+            self._retry_btn = _MessageActionBtn("\u21bb", "Retry")  # ↻
+            self._retry_btn.clicked.connect(self.retry_requested.emit)
+            actions_layout.addWidget(self._retry_btn)
+
+        self._delete_btn = _MessageActionBtn("\u2715", "Delete")  # ✕
+        self._delete_btn.clicked.connect(self.delete_requested.emit)
+        actions_layout.addWidget(self._delete_btn)
+
+        header.addWidget(self._actions_container)
 
         ts = QLabel(datetime.now().strftime("%H:%M"))
         ts.setObjectName("msg_timestamp")
@@ -152,6 +214,52 @@ class ChatMessageWidget(QFrame):
             layout.addWidget(dv)
 
         self._anim = slide_fade_in(self, duration=300)
+
+        # Enable context menu
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.customContextMenuRequested.connect(self._show_context_menu)
+
+    # ── Hover show/hide actions ──
+
+    def enterEvent(self, event) -> None:
+        self._actions_container.setVisible(True)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:
+        self._actions_container.setVisible(False)
+        super().leaveEvent(event)
+
+    # ── Context menu ──
+
+    def _show_context_menu(self, pos) -> None:
+        menu = QMenu(self)
+        menu.setStyleSheet(
+            f"QMenu {{ background: {DARK_BG}; border: 1px solid {GLASS_BORDER};"
+            f" border-radius: {RADIUS_SM}px; padding: 4px; color: {DARK_TEXT}; }}"
+            f"QMenu::item {{ padding: 6px 24px 6px 12px; border-radius: 4px; }}"
+            f"QMenu::item:selected {{ background: rgba(255,255,255,0.08); }}"
+        )
+
+        copy_action = menu.addAction("\u2398  Copy text")
+        copy_action.triggered.connect(self._copy_text)
+
+        if self._role == "assistant":
+            retry_action = menu.addAction("\u21bb  Retry")
+            retry_action.triggered.connect(self.retry_requested.emit)
+
+        menu.addSeparator()
+
+        delete_action = menu.addAction("\u2715  Delete message")
+        delete_action.triggered.connect(self.delete_requested.emit)
+
+        menu.exec(self.mapToGlobal(pos))
+
+    # ── Actions ──
+
+    def _copy_text(self) -> None:
+        clipboard = QApplication.clipboard()
+        if clipboard:
+            clipboard.setText(self._raw_text_store)
 
     def append_text(self, text: str) -> None:
         self._raw_text_store += text

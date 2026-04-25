@@ -2,6 +2,7 @@
 
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
+    QFrame,
     QHBoxLayout,
     QLabel,
     QScrollArea,
@@ -41,21 +42,92 @@ from browser_agent.ui.styles import (
 )
 
 
-class _HeaderButton(QLabel):
-    """Clickable icon button for the chat header."""
+class _HeaderActionButton(QWidget):
+    """Styled header button with icon + label, proper hit target, and hover effect."""
     clicked = pyqtSignal()
 
-    def __init__(self, icon: str, tooltip: str, parent=None):
-        super().__init__(icon, parent)
+    def __init__(self, icon: str, label: str, tooltip: str,
+                 accent: bool = False, parent=None):
+        super().__init__(parent)
         self.setToolTip(tooltip)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setFixedSize(32, 32)
-        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.setStyleSheet(
-            f"QLabel {{ color: {DARK_TEXT_MUTED}; font-size: 16px;"
-            f" background: transparent; border-radius: 8px; }}"
-            f"QLabel:hover {{ color: {DARK_TEXT}; background: rgba(255,255,255,0.06); }}"
+        self.setFixedHeight(36)
+        self._accent = accent
+        self._hovered = False
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(SPACE_2, SPACE_1, SPACE_3, SPACE_1)
+        layout.setSpacing(SPACE_1)
+
+        self._icon_label = QLabel(icon)
+        self._icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self._icon_label)
+
+        self._text_label = QLabel(label)
+        layout.addWidget(self._text_label)
+
+        self._apply_default_style()
+
+    def _apply_default_style(self) -> None:
+        if self._accent:
+            icon_color = ACCENT_PRIMARY
+            text_color = ACCENT_PRIMARY
+        else:
+            icon_color = DARK_TEXT_MUTED
+            text_color = DARK_TEXT_MUTED
+        self._icon_label.setStyleSheet(
+            f"color: {icon_color}; font-size: 15px; background: transparent;"
         )
+        self._text_label.setStyleSheet(
+            f"color: {text_color}; font-size: {FONT_XS}px; font-weight: 600;"
+            f" letter-spacing: 0.3px; background: transparent;"
+        )
+        bg = "rgba(59,130,246,0.08)" if self._accent else "transparent"
+        border = f"1px solid rgba(59,130,246,0.15)" if self._accent else "1px solid transparent"
+        self.setStyleSheet(
+            f"_HeaderActionButton {{ background: {bg}; border: {border};"
+            f" border-radius: {RADIUS_MD}px; }}"
+        )
+
+    def set_active_style(self, color: str, bg: str) -> None:
+        """Apply active/selected styling (e.g., when overlay is shown)."""
+        self._icon_label.setStyleSheet(
+            f"color: {color}; font-size: 15px; background: transparent;"
+        )
+        self._text_label.setStyleSheet(
+            f"color: {color}; font-size: {FONT_XS}px; font-weight: 600;"
+            f" letter-spacing: 0.3px; background: transparent;"
+        )
+        self.setStyleSheet(
+            f"_HeaderActionButton {{ background: {bg};"
+            f" border: 1px solid {color}40; border-radius: {RADIUS_MD}px; }}"
+        )
+
+    def enterEvent(self, event) -> None:
+        self._hovered = True
+        if self._accent:
+            self.setStyleSheet(
+                f"_HeaderActionButton {{ background: rgba(59,130,246,0.15);"
+                f" border: 1px solid rgba(59,130,246,0.25); border-radius: {RADIUS_MD}px; }}"
+            )
+        else:
+            self._icon_label.setStyleSheet(
+                f"color: {DARK_TEXT}; font-size: 15px; background: transparent;"
+            )
+            self._text_label.setStyleSheet(
+                f"color: {DARK_TEXT}; font-size: {FONT_XS}px; font-weight: 600;"
+                f" letter-spacing: 0.3px; background: transparent;"
+            )
+            self.setStyleSheet(
+                f"_HeaderActionButton {{ background: rgba(255,255,255,0.06);"
+                f" border: 1px solid rgba(255,255,255,0.08); border-radius: {RADIUS_MD}px; }}"
+            )
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:
+        self._hovered = False
+        self._apply_default_style()
+        super().leaveEvent(event)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -145,27 +217,35 @@ class ChatPanel(QWidget):
         self._status_text.setStyleSheet(label_style(DARK_TEXT_MUTED, FONT_SM))
         header_layout.addWidget(self._status_text)
 
+        # Separator between status and action buttons
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.VLine)
+        sep.setFixedHeight(24)
+        sep.setStyleSheet(f"color: {GLASS_BORDER};")
         header_layout.addSpacing(SPACE_2)
+        header_layout.addWidget(sep)
+        header_layout.addSpacing(SPACE_1)
 
-        # Action buttons: New Chat | History | Skills
-        self._new_btn = _HeaderButton("+", "New Chat")
-        self._new_btn.setStyleSheet(
-            f"QLabel {{ color: {ACCENT_PRIMARY}; font-size: 20px; font-weight: 500;"
-            f" background: transparent; border-radius: 8px; }}"
-            f"QLabel:hover {{ background: rgba(59,130,246,0.15); }}"
-        )
+        # Action buttons: New Chat | History | Skills | Rules
+        self._new_btn = _HeaderActionButton("+", "New", "New Chat (Ctrl+N)", accent=True)
         self._new_btn.clicked.connect(self.new_thread_requested.emit)
         header_layout.addWidget(self._new_btn)
 
-        self._history_btn = _HeaderButton("\u2263", "Chat History") # Strict equivalent (≡)
+        header_layout.addSpacing(2)
+
+        self._history_btn = _HeaderActionButton("\u2263", "History", "Chat History")
         self._history_btn.clicked.connect(self.history_toggled.emit)
         header_layout.addWidget(self._history_btn)
 
-        self._skills_btn = _HeaderButton("\u22c6", "Skills") # Star operator (⋆)
+        header_layout.addSpacing(2)
+
+        self._skills_btn = _HeaderActionButton("\u22c6", "Skills", "Saved Skills")
         self._skills_btn.clicked.connect(self.skills_toggled.emit)
         header_layout.addWidget(self._skills_btn)
 
-        self._rules_btn = _HeaderButton("\u23f0", "Rules") # Alarm clock
+        header_layout.addSpacing(2)
+
+        self._rules_btn = _HeaderActionButton("\u23f0", "Rules", "Automation Rules")
         self._rules_btn.clicked.connect(self.rules_toggled.emit)
         header_layout.addWidget(self._rules_btn)
 
@@ -260,14 +340,9 @@ class ChatPanel(QWidget):
         self._rules_layout.addWidget(widget)
 
     def _reset_overlay_buttons(self) -> None:
-        default = (
-            f"QLabel {{ color: {DARK_TEXT_MUTED}; font-size: 16px;"
-            f" background: transparent; border-radius: 8px; }}"
-            f"QLabel:hover {{ color: {DARK_TEXT}; background: rgba(255,255,255,0.06); }}"
-        )
-        self._history_btn.setStyleSheet(default)
-        self._skills_btn.setStyleSheet(default)
-        self._rules_btn.setStyleSheet(default)
+        self._history_btn._apply_default_style()
+        self._skills_btn._apply_default_style()
+        self._rules_btn._apply_default_style()
 
     def show_chat(self) -> None:
         self._stack.setCurrentIndex(0)
@@ -279,10 +354,7 @@ class ChatPanel(QWidget):
         else:
             self._reset_overlay_buttons()
             self._stack.setCurrentIndex(1)
-            self._history_btn.setStyleSheet(
-                f"QLabel {{ color: {ACCENT_PRIMARY}; font-size: 16px;"
-                f" background: rgba(108,92,231,0.12); border-radius: 8px; }}"
-            )
+            self._history_btn.set_active_style(ACCENT_PRIMARY, "rgba(59,130,246,0.12)")
 
     def toggle_skills(self) -> None:
         if self._stack.currentIndex() == 2:
@@ -290,10 +362,7 @@ class ChatPanel(QWidget):
         else:
             self._reset_overlay_buttons()
             self._stack.setCurrentIndex(2)
-            self._skills_btn.setStyleSheet(
-                f"QLabel {{ color: {ACCENT_SECONDARY}; font-size: 16px;"
-                f" background: rgba(168,85,247,0.12); border-radius: 8px; }}"
-            )
+            self._skills_btn.set_active_style(ACCENT_SECONDARY, "rgba(168,85,247,0.12)")
 
     def toggle_rules(self) -> None:
         if self._stack.currentIndex() == 3:
@@ -301,10 +370,7 @@ class ChatPanel(QWidget):
         else:
             self._reset_overlay_buttons()
             self._stack.setCurrentIndex(3)
-            self._rules_btn.setStyleSheet(
-                f"QLabel {{ color: {WARNING}; font-size: 16px;"
-                f" background: rgba(245,158,11,0.12); border-radius: 8px; }}"
-            )
+            self._rules_btn.set_active_style(WARNING, "rgba(245,158,11,0.12)")
 
     # ── Event filter (Enter to send) ──
 
@@ -364,7 +430,24 @@ class ChatPanel(QWidget):
         self._help_widget = None
         self._add_widget(ChatMessageWidget("assistant", text))
 
+    def start_tool_call(self, tool_name: str, args_str: str = "") -> None:
+        """Show a tool call in-progress with spinner."""
+        if self._tool_group is None:
+            self._tool_group = ToolCallGroup()
+            self._add_widget(self._tool_group)
+        self._tool_group.start_tool_call(tool_name, args_str)
+        self._scroll_to_bottom()
+
+    def complete_tool_call(self, tool_name: str, result: str = "") -> None:
+        """Mark a tool call as complete with result."""
+        if self._tool_group is None:
+            self._tool_group = ToolCallGroup()
+            self._add_widget(self._tool_group)
+        self._tool_group.complete_tool_call(tool_name, result)
+        self._scroll_to_bottom()
+
     def append_tool_message(self, tool_name: str, result: str) -> None:
+        """Legacy fallback for tool messages."""
         if self._tool_group is None:
             self._tool_group = ToolCallGroup()
             self._add_widget(self._tool_group)

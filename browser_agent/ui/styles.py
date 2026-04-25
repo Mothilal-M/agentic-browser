@@ -447,6 +447,12 @@ QFrame#rule_card:hover {{
     background: rgba(245,158,11,0.08); border-color: rgba(245,158,11,0.20);
 }}
 
+/* --- Sidebar Icon Strip --- */
+QWidget#sidebar_strip {{
+    background-color: rgba(8,8,15,0.95);
+    border-left: 1px solid {GLASS_BORDER};
+}}
+
 /* --- Status Bar --- */
 QStatusBar {{
     background-color: rgba(8,8,15,0.9); color: {DARK_TEXT_MUTED};

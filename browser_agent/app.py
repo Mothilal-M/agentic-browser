@@ -137,10 +137,10 @@ def main() -> int:
     signals.assistant_message_complete.connect(window.chat_panel.append_assistant_message)
     signals.assistant_text.connect(window.chat_panel.update_streaming_message)
     signals.tool_call_started.connect(
-        lambda name, args: window.chat_panel.append_tool_message(name, f"args: {args}")
+        lambda name, args: window.chat_panel.start_tool_call(name, args)
     )
     signals.tool_result_received.connect(
-        lambda name, result: window.chat_panel.append_tool_message(f"{name} result", result)
+        lambda name, result: window.chat_panel.complete_tool_call(name, result)
     )
     signals.thinking_update.connect(window.chat_panel.append_thinking)
     signals.error_occurred.connect(window.chat_panel.append_error)
